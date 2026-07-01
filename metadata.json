@@ -1,0 +1,6 @@
+{
+  "name": "Raj Educational Group",
+  "description": "An ERP application for college students.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

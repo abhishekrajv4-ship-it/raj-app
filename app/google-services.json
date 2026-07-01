@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "758609059926",
+    "project_id": "raj-educational-group",
+    "storage_bucket": "raj-educational-group.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:758609059926:android:da200e68ecba20cf795bf7",
+        "android_client_info": {
+          "package_name": "app.emergent.rajeduportal140dcb3e9"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBkQFlXJHwutU7n2tkimTiAJT9Omhax_zU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
