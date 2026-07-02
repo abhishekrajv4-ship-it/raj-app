@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import androidx.compose.ui.platform.LocalContext
 import com.google.firebase.firestore.FirebaseFirestore
 import com.rajeducational.erp.theme.AppColors
 import kotlinx.coroutines.tasks.await
@@ -143,7 +144,8 @@ data class TeacherReview(
     val college: String = "",
     val course: String = "",
     val timestamp: Long = 0,
-    val ratings: Map<String, Int> = emptyMap()
+    val ratings: Map<String, Int> = emptyMap(),
+    val studentId: String = ""
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -151,6 +153,9 @@ data class TeacherReview(
 fun AdminTeacherReviewsScreen(navController: NavController) {
     var reviewsList by remember { mutableStateOf<List<TeacherReview>>(emptyList()) }
     val firestore = FirebaseFirestore.getInstance()
+    var isResetting by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var showResetConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         firestore.collection("teacher_reviews")
@@ -164,6 +169,61 @@ fun AdminTeacherReviewsScreen(navController: NavController) {
             }
     }
 
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text("Reset All Student Reviews?") },
+            text = { Text("Are you sure you want to delete all student reviews? This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isResetting = true
+                        firestore.collection("teacher_reviews").get()
+                            .addOnSuccessListener { snapshot ->
+                                val batch = firestore.batch()
+                                for (doc in snapshot.documents) {
+                                    batch.delete(doc.reference)
+                                }
+                                firestore.collection("staff_reviews").get()
+                                    .addOnSuccessListener { staffSnapshot ->
+                                        for (doc in staffSnapshot.documents) {
+                                            batch.delete(doc.reference)
+                                        }
+                                        batch.commit()
+                                            .addOnSuccessListener {
+                                                android.widget.Toast.makeText(context, "Student reviews reset successfully", android.widget.Toast.LENGTH_SHORT).show()
+                                                isResetting = false
+                                                showResetConfirm = false
+                                            }
+                                            .addOnFailureListener {
+                                                isResetting = false
+                                            }
+                                    }
+                                    .addOnFailureListener {
+                                        batch.commit()
+                                            .addOnSuccessListener {
+                                                android.widget.Toast.makeText(context, "Student reviews reset successfully", android.widget.Toast.LENGTH_SHORT).show()
+                                                isResetting = false
+                                                showResetConfirm = false
+                                            }
+                                            .addOnFailureListener {
+                                                isResetting = false
+                                            }
+                                    }
+                            }
+                            .addOnFailureListener {
+                                isResetting = false
+                            }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) { Text(if (isResetting) "Resetting..." else "Reset") }
+            },
+            dismissButton = {
+                Button(onClick = { showResetConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -172,8 +232,11 @@ fun AdminTeacherReviewsScreen(navController: NavController) {
                     IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 },
                 actions = {
+                    IconButton(onClick = { showResetConfirm = true }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Reset Reviews", tint = Color.White)
+                    }
                     TextButton(onClick = { navController.navigate("admin_teacher_review_criteria_control") }) {
-                        Text("Manage Review Criteria", color = Color.White)
+                        Text("Manage Criteria", color = Color.White)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Admin, titleContentColor = Color.White, navigationIconContentColor = Color.White)

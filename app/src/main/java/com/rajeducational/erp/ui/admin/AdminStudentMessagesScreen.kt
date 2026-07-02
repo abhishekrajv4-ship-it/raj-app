@@ -40,7 +40,8 @@ data class AdminStudentContact(
     val name: String,
     val college: String,
     val course: String,
-    val session: String
+    val session: String,
+    val isAttending: Boolean = true
 )
 
 data class AdminChatMessage(
@@ -91,7 +92,8 @@ fun AdminStudentMessagesScreen(navController: NavController) {
                             name = doc.getString("fullName") ?: "Unknown Student",
                             college = doc.getString("college") ?: "N/A",
                             course = doc.getString("course") ?: "N/A",
-                            session = doc.getString("session") ?: "N/A"
+                            session = doc.getString("session") ?: "N/A",
+                            isAttending = doc.getBoolean("isAttending") ?: true
                         )
                     }
                 }
@@ -362,8 +364,22 @@ fun AdminStudentMessagesScreen(navController: NavController) {
                                                 text = student.name,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 15.sp,
-                                                color = AppColors.Navy
+                                                color = AppColors.Navy,
+                                                modifier = Modifier.weight(1f, fill = false)
                                             )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Surface(
+                                                color = AppColors.Student.copy(alpha = 0.1f),
+                                                contentColor = AppColors.Student,
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Student",
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
                                             val unreadCount = allAdminStudentChats.count { it.studentId == student.id && it.senderId == student.id && !it.isRead }
                                             if (unreadCount > 0) {
                                                 Spacer(modifier = Modifier.width(8.dp))
@@ -449,7 +465,7 @@ fun AdminStudentMessagesScreen(navController: NavController) {
                                 ) {
                                     Column(
                                         horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-                                        modifier = Modifier.fillMaxWidth(0.82f)
+                                        modifier = Modifier.widthIn(max = 280.dp)
                                     ) {
                                         if (!isMe) {
                                             Text(

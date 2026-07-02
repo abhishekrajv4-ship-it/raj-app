@@ -53,7 +53,7 @@ fun AdminTeacherQRControlScreen(navController: NavController) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Teacher QR Registration", fontWeight = FontWeight.Bold, color = Color.White) },
+                title = { Text("Teacher and Staff QR Registration", fontWeight = FontWeight.Bold, color = Color.White) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
@@ -73,7 +73,7 @@ fun AdminTeacherQRControlScreen(navController: NavController) {
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                "Ask Teacher to scan this QR Code",
+                "Ask Teacher or Staff to scan this QR Code",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = AppColors.Navy,
@@ -111,7 +111,7 @@ fun AdminTeacherQRControlScreen(navController: NavController) {
             
             Spacer(modifier = Modifier.height(48.dp))
             Text(
-                "Note: The QR code is valid for 2 minutes and is specifically for initial Teacher authorization & registration.",
+                "Note: The QR code is valid for 2 minutes and is specifically for initial Teacher & Staff authorization & registration.",
                 fontSize = 14.sp,
                 color = AppColors.TextSecondary,
                 textAlign = TextAlign.Center,

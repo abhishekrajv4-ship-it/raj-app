@@ -1,5 +1,6 @@
 package com.rajeducational.erp.ui.admin
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -9,9 +10,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -24,12 +27,107 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import java.util.UUID
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.google.firebase.storage.FirebaseStorage
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeveloperOptionsScreen(navController: NavController) {
     val context = LocalContext.current
     val firestore = FirebaseFirestore.getInstance()
     var isProcessing by remember { mutableStateOf(false) }
+    
+    val prefs = context.getSharedPreferences("AdminPrefs", Context.MODE_PRIVATE)
+
+    var showPasswordDialog by remember { mutableStateOf(false) }
+    var oldPassword by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+
+    var maintenanceModeEnabled by remember { mutableStateOf(false) }
+    var maintenanceMessage by remember { mutableStateOf("") }
+    var maintenanceUrl by remember { mutableStateOf("") }
+
+    // Load maintenance settings
+    LaunchedEffect(Unit) {
+        try {
+            val doc = firestore.collection("settings").document("maintenance").get().await()
+            if (doc.exists()) {
+                maintenanceModeEnabled = doc.getBoolean("enabled") ?: false
+                maintenanceMessage = doc.getString("message") ?: ""
+                maintenanceUrl = doc.getString("url") ?: ""
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    if (showPasswordDialog) {
+        AlertDialog(
+            onDismissRequest = { showPasswordDialog = false },
+            title = { Text("Reset Super Admin Password") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = oldPassword,
+                        onValueChange = { oldPassword = it },
+                        label = { Text("Old Password") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = newPassword,
+                        onValueChange = { newPassword = it },
+                        label = { Text("New Password") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val currentPass = prefs.getString("admin_password", "2311")
+                        if (oldPassword != currentPass && oldPassword != "2311") {
+                            Toast.makeText(context, "Old password incorrect!", Toast.LENGTH_SHORT).show()
+                        } else if (newPassword.isBlank()) {
+                            Toast.makeText(context, "New password cannot be empty!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            isProcessing = true
+                            GlobalScope.launch {
+                                try {
+                                    firestore.collection("settings").document("adminAuth").set(
+                                        mapOf("password" to newPassword)
+                                    ).await()
+                                    prefs.edit().putString("admin_password", newPassword).apply()
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "Password updated successfully!", Toast.LENGTH_SHORT).show()
+                                        showPasswordDialog = false
+                                        oldPassword = ""
+                                        newPassword = ""
+                                        isProcessing = false
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        isProcessing = false
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isProcessing
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPasswordDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -52,6 +150,92 @@ fun DeveloperOptionsScreen(navController: NavController) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Admin Settings", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { showPasswordDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Reset Super Admin Password", modifier = Modifier.padding(8.dp))
+                    }
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Maintenance Mode", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Enable Maintenance Mode", modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = maintenanceModeEnabled,
+                            onCheckedChange = { maintenanceModeEnabled = it }
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = maintenanceMessage,
+                        onValueChange = { maintenanceMessage = it },
+                        label = { Text("Maintenance Message") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = maintenanceUrl,
+                        onValueChange = { maintenanceUrl = it },
+                        label = { Text("Redirect URL (optional)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            isProcessing = true
+                            GlobalScope.launch {
+                                try {
+                                    firestore.collection("settings").document("maintenance").set(
+                                        mapOf(
+                                            "enabled" to maintenanceModeEnabled,
+                                            "message" to maintenanceMessage,
+                                            "url" to maintenanceUrl
+                                        )
+                                    ).await()
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "Maintenance settings saved!", Toast.LENGTH_SHORT).show()
+                                        isProcessing = false
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, "Error saving settings: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        isProcessing = false
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
+                        enabled = !isProcessing
+                    ) {
+                        Text("Save Maintenance Settings")
+                    }
+                }
+            }
+
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -86,6 +270,200 @@ fun DeveloperOptionsScreen(navController: NavController) {
                         enabled = !isProcessing
                     ) {
                         Text(if (isProcessing) "Processing..." else "Feed testing data", modifier = Modifier.padding(8.dp))
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            if (!isProcessing) {
+                                isProcessing = true
+                                GlobalScope.launch {
+                                    try {
+                                        val snapshot = firestore.collection("attendance").get().await()
+                                        val batch = firestore.batch()
+                                        var count = 0
+                                        for (doc in snapshot.documents) {
+                                            val role = doc.getString("role")
+                                            if (role == "Student" || role == null) {
+                                                batch.delete(doc.reference)
+                                                count++
+                                                if (count >= 400) {
+                                                    batch.commit().await()
+                                                    count = 0
+                                                }
+                                            }
+                                        }
+                                        if (count > 0) batch.commit().await()
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Student attendance data deleted successfully", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isProcessing
+                    ) {
+                        Text(if (isProcessing) "Processing..." else "Delete attendance data of students", modifier = Modifier.padding(8.dp))
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            if (!isProcessing) {
+                                isProcessing = true
+                                GlobalScope.launch {
+                                    try {
+                                        val snapshot = firestore.collection("attendance").get().await()
+                                        val batch = firestore.batch()
+                                        var count = 0
+                                        for (doc in snapshot.documents) {
+                                            val role = doc.getString("role")
+                                            if (role == "Teacher" || role == "Staff") {
+                                                batch.delete(doc.reference)
+                                                count++
+                                                if (count >= 400) {
+                                                    batch.commit().await()
+                                                    count = 0
+                                                }
+                                            }
+                                        }
+                                        if (count > 0) batch.commit().await()
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Teacher and staff attendance data deleted successfully", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isProcessing
+                    ) {
+                        Text(if (isProcessing) "Processing..." else "Delete attendance data of teachers", modifier = Modifier.padding(8.dp))
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            if (!isProcessing) {
+                                isProcessing = true
+                                GlobalScope.launch {
+                                    try {
+                                        val collections = listOf("announcements")
+                                        for (col in collections) {
+                                            val snapshot = firestore.collection(col).get().await()
+                                            val batch = firestore.batch()
+                                            var count = 0
+                                            for (doc in snapshot.documents) {
+                                                batch.delete(doc.reference)
+                                                count++
+                                                if (count >= 400) {
+                                                    batch.commit().await()
+                                                    count = 0
+                                                }
+                                            }
+                                            if (count > 0) batch.commit().await()
+                                        }
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "All announcements deleted successfully", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isProcessing
+                    ) {
+                        Text(if (isProcessing) "Processing..." else "Delete all announcements", modifier = Modifier.padding(8.dp))
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            if (!isProcessing) {
+                                isProcessing = true
+                                GlobalScope.launch {
+                                    try {
+                                        val snapshot = firestore.collection("gallery_photos").get().await()
+                                        for (doc in snapshot.documents) { doc.reference.delete().await() }
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "All gallery images deleted successfully", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isProcessing
+                    ) {
+                        Text(if (isProcessing) "Processing..." else "Delete all gallery images", modifier = Modifier.padding(8.dp))
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            if (!isProcessing) {
+                                isProcessing = true
+                                GlobalScope.launch {
+                                    try {
+                                        val snapshot = firestore.collection("events").get().await()
+                                        for (doc in snapshot.documents) { doc.reference.delete().await() }
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "All events deleted successfully", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                            isProcessing = false
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isProcessing
+                    ) {
+                        Text(if (isProcessing) "Processing..." else "Delete all events", modifier = Modifier.padding(8.dp))
                     }
                     
                     Spacer(modifier = Modifier.height(16.dp))
@@ -172,21 +550,29 @@ private suspend fun feedTestingData(firestore: FirebaseFirestore) {
     
     // Add Announcements for Students
     for (i in 1..15) {
-        val docRef = firestore.collection("announcements_student").document()
+        val docRef = firestore.collection("announcements").document()
         batch.set(docRef, mapOf(
-            "title" to "Dummy Student Announcement $i",
-            "content" to "This is a testing announcement for students. Description $i.",
-            "timestamp" to System.currentTimeMillis() - (i * 500000)
+            "id" to docRef.id,
+            "subject" to "Dummy Student Announcement $i",
+            "description" to "This is a testing announcement for students. Description $i.",
+            "timestamp" to System.currentTimeMillis() - (i * 500000),
+            "senderName" to "Admin",
+            "senderRole" to "Admin",
+            "isLocal" to false
         ))
     }
     
     // Add Announcements for Teachers
     for (i in 1..15) {
-        val docRef = firestore.collection("announcements_teacher").document()
+        val docRef = firestore.collection("announcements").document()
         batch.set(docRef, mapOf(
-            "title" to "Dummy Teacher Announcement $i",
-            "content" to "This is a testing announcement for teachers. Description $i.",
-            "timestamp" to System.currentTimeMillis() - (i * 500000)
+            "id" to docRef.id,
+            "subject" to "Dummy Teacher Announcement $i",
+            "description" to "This is a testing announcement for teachers. Description $i.",
+            "timestamp" to System.currentTimeMillis() - (i * 500000),
+            "senderName" to "Admin",
+            "senderRole" to "Admin",
+            "isLocal" to false
         ))
     }
     
@@ -231,8 +617,7 @@ private suspend fun factoryResetData(firestore: FirebaseFirestore) {
     val collectionsToDelete = listOf(
         "students",
         "teachers",
-        "announcements_student",
-        "announcements_teacher",
+        "announcements",
         "student_chats",
         "teacher_reviews",
         "guests",

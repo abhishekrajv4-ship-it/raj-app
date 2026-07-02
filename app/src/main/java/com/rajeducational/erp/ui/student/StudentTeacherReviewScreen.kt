@@ -31,12 +31,19 @@ data class TeacherData(
     val name: String = "",
     val collegeName: String = "",
     val course: String = "",
-    val years: List<String> = emptyList()
+    val years: List<String> = emptyList(),
+    val isTeacher: Boolean = true,
+    val rating: Double = 0.0,
+    val profileUrl: String = ""
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentTeacherReviewScreen(navController: NavController) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sharedPrefs = remember { context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE) }
+    val studentId = remember { sharedPrefs.getString("student_id", "") ?: "" }
+
     var searchQuery by remember { mutableStateOf("") }
     var teachersList by remember { mutableStateOf<List<TeacherData>>(emptyList()) }
     var reviewCriteriaList by remember { mutableStateOf<List<com.rajeducational.erp.ui.admin.ReviewCriteria>>(emptyList()) }
@@ -45,16 +52,55 @@ fun StudentTeacherReviewScreen(navController: NavController) {
     var selectedTeacher by remember { mutableStateOf<TeacherData?>(null) }
     var showReviewDialog by remember { mutableStateOf(false) }
 
+    var existingTeacherReviews by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var existingStaffReviews by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    LaunchedEffect(studentId) {
+        if (studentId.isNotEmpty()) {
+            firestore.collection("teacher_reviews")
+                .whereEqualTo("studentId", studentId)
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null) {
+                        existingTeacherReviews = snapshot.documents.mapNotNull { it.getString("teacherId") }.toSet()
+                    }
+                }
+            firestore.collection("staff_reviews")
+                .whereEqualTo("studentId", studentId)
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null) {
+                        existingStaffReviews = snapshot.documents.mapNotNull { it.getString("staffId") ?: it.getString("teacherId") }.toSet()
+                    }
+                }
+        }
+    }
+
     LaunchedEffect(Unit) {
-        firestore.collection("teachers").get().addOnSuccessListener { snapshot ->
-            teachersList = snapshot.documents.mapNotNull { doc ->
+        val loadedTeachers = mutableListOf<TeacherData>()
+        
+        firestore.collection("teachers").get().addOnSuccessListener { teacherSnapshot ->
+            val teachers = teacherSnapshot.documents.mapNotNull { doc ->
                 val name = doc.getString("name") ?: ""
                 val collegeName = doc.getString("collegeName") ?: ""
                 val course = doc.getString("course") ?: ""
                 val years = doc.get("years") as? List<String> ?: emptyList()
-                TeacherData(id = doc.id, name = name, collegeName = collegeName, course = course, years = years)
+                TeacherData(id = doc.id, name = name, collegeName = collegeName, course = course, years = years, isTeacher = true)
             }
+            loadedTeachers.addAll(teachers)
+            teachersList = loadedTeachers.toList()
         }
+
+        firestore.collection("staffs").get().addOnSuccessListener { staffSnapshot ->
+            val staffs = staffSnapshot.documents.mapNotNull { doc ->
+                val name = doc.getString("name") ?: ""
+                val collegeName = doc.getString("collegeName") ?: ""
+                val course = doc.getString("course") ?: doc.getString("departmentName") ?: "Staff"
+                val years = doc.get("years") as? List<String> ?: emptyList()
+                TeacherData(id = doc.id, name = name, collegeName = collegeName, course = course, years = years, isTeacher = false)
+            }
+            loadedTeachers.addAll(staffs)
+            teachersList = loadedTeachers.toList()
+        }
+
         firestore.collection("teacher_review_criteria").get().addOnSuccessListener { snapshot ->
             reviewCriteriaList = snapshot.documents.mapNotNull { doc ->
                 doc.toObject(com.rajeducational.erp.ui.admin.ReviewCriteria::class.java)?.copy(id = doc.id)
@@ -71,7 +117,7 @@ fun StudentTeacherReviewScreen(navController: NavController) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Teacher Reviews", fontWeight = FontWeight.Bold) },
+                title = { Text("Teacher & Staff Reviews", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 },
@@ -88,7 +134,7 @@ fun StudentTeacherReviewScreen(navController: NavController) {
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                label = { Text("Search teachers...") },
+                label = { Text("Search teachers & staff...") },
                 leadingIcon = { Icon(Icons.Default.Search, "Search") },
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 shape = RoundedCornerShape(12.dp),
@@ -96,7 +142,7 @@ fun StudentTeacherReviewScreen(navController: NavController) {
             )
             
             Text(
-                text = "Note: Your review will be anonymous. Your identity won't be revealed to the teacher when you submit a review.",
+                text = "Note: Your review will be anonymous. Your identity won't be revealed to the receiver when you submit a review.",
                 fontSize = 12.sp,
                 color = AppColors.TextSecondary,
                 modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)
@@ -110,14 +156,64 @@ fun StudentTeacherReviewScreen(navController: NavController) {
                 items(filteredTeachers) { teacher ->
                     Card(
                         modifier = Modifier.fillMaxWidth().clickable {
-                            selectedTeacher = teacher
-                            showReviewDialog = true
+                            val alreadyReviewed = if (teacher.isTeacher) {
+                                existingTeacherReviews.contains(teacher.id)
+                            } else {
+                                existingStaffReviews.contains(teacher.id)
+                            }
+                            if (alreadyReviewed) {
+                                android.widget.Toast.makeText(context, "You have already submitted a review for this ${if (teacher.isTeacher) "teacher" else "staff member"}.", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                selectedTeacher = teacher
+                                showReviewDialog = true
+                            }
                         },
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = Color.White)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text(teacher.name, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(teacher.name, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy, modifier = Modifier.weight(1f))
+                                
+                                val alreadyReviewed = if (teacher.isTeacher) {
+                                    existingTeacherReviews.contains(teacher.id)
+                                } else {
+                                    existingStaffReviews.contains(teacher.id)
+                                }
+                                if (alreadyReviewed) {
+                                    Surface(
+                                        color = Color(0xFFE8F5E9),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = "Reviewed",
+                                            color = Color(0xFF2E7D32),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+
+                                // Label Tag for Teacher or Staff
+                                Surface(
+                                    color = if (teacher.isTeacher) AppColors.Teacher.copy(alpha = 0.15f) else AppColors.Staff.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = if (teacher.isTeacher) "Teacher" else "Staff",
+                                        color = if (teacher.isTeacher) AppColors.Teacher else AppColors.Staff,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text("${teacher.course} | ${teacher.collegeName}", fontSize = 14.sp, color = AppColors.TextSecondary)
                             if (teacher.years.isNotEmpty()) {
@@ -137,19 +233,39 @@ fun StudentTeacherReviewScreen(navController: NavController) {
             criteriaList = reviewCriteriaList,
             onDismiss = { showReviewDialog = false },
             onSubmit = { ratings ->
-                val review = com.rajeducational.erp.ui.admin.TeacherReview(
-                    teacherId = selectedTeacher!!.id,
-                    teacherName = selectedTeacher!!.name,
-                    college = selectedTeacher!!.collegeName,
-                    course = selectedTeacher!!.course,
-                    timestamp = System.currentTimeMillis(),
-                    ratings = ratings
-                )
-                firestore.collection("teacher_reviews").add(review)
-                    .addOnSuccessListener {
-                        showReviewDialog = false
-                        android.widget.Toast.makeText(navController.context, "Review submitted successfully", android.widget.Toast.LENGTH_SHORT).show()
-                    }
+                if (selectedTeacher!!.isTeacher) {
+                    val review = com.rajeducational.erp.ui.admin.TeacherReview(
+                        teacherId = selectedTeacher!!.id,
+                        teacherName = selectedTeacher!!.name,
+                        college = selectedTeacher!!.collegeName,
+                        course = selectedTeacher!!.course,
+                        timestamp = System.currentTimeMillis(),
+                        ratings = ratings,
+                        studentId = studentId
+                    )
+                    firestore.collection("teacher_reviews").add(review)
+                        .addOnSuccessListener {
+                            showReviewDialog = false
+                            android.widget.Toast.makeText(navController.context, "Review submitted successfully", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                } else {
+                    val reviewData = hashMapOf(
+                        "staffId" to selectedTeacher!!.id,
+                        "teacherId" to selectedTeacher!!.id,
+                        "staffName" to selectedTeacher!!.name,
+                        "teacherName" to selectedTeacher!!.name,
+                        "college" to selectedTeacher!!.collegeName,
+                        "course" to selectedTeacher!!.course,
+                        "timestamp" to System.currentTimeMillis(),
+                        "ratings" to ratings,
+                        "studentId" to studentId
+                    )
+                    firestore.collection("staff_reviews").add(reviewData)
+                        .addOnSuccessListener {
+                            showReviewDialog = false
+                            android.widget.Toast.makeText(navController.context, "Review submitted successfully", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                }
             }
         )
     }

@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.google.firebase.firestore.FirebaseFirestore
 import com.rajeducational.erp.theme.AppColors
+import com.rajeducational.erp.ui.components.AttendancePercentageBadge
+import com.rajeducational.erp.ui.components.AttendanceStatsCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,15 +102,38 @@ fun AdminTeacherStudentsScreen(navController: NavController, teacherId: String) 
                             colors = CardDefaults.cardColors(containerColor = Color.White)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    (student["fullName"] as? String) ?: "Unknown",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 18.sp,
-                                    color = AppColors.Navy
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        (student["fullName"] as? String) ?: "Unknown",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = AppColors.Navy,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    val isAttending = student["isAttending"] as? Boolean ?: true
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Surface(
+                                        color = if (isAttending) AppColors.Student.copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
+                                        contentColor = if (isAttending) AppColors.Student else Color.Red,
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isAttending) "Attending" else "Non-attending",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text("ID: ${student["id"]}", fontSize = 14.sp, color = AppColors.TextSecondary)
                                 Text("Course: ${student["course"]}", fontSize = 14.sp, color = AppColors.TextSecondary)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                AttendancePercentageBadge(
+                                    studentId = (student["id"] as? String) ?: "",
+                                    backgroundColor = AppColors.Admin.copy(alpha = 0.15f),
+                                    textColor = AppColors.Admin
+                                )
                             }
                         }
                     }
@@ -160,6 +185,11 @@ fun StudentDetailsView(student: Map<String, Any>, onBack: () -> Unit) {
                     Text("Session: ${student["session"] ?: "N/A"}", fontSize = 16.sp)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Phone: ${student["phone"] ?: "N/A"}", fontSize = 16.sp)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    AttendanceStatsCard(
+                        studentId = student["id"] as? String ?: "",
+                        cardColor = AppColors.Admin.copy(alpha = 0.05f)
+                    )
                 }
             }
         }

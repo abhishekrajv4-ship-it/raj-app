@@ -32,21 +32,43 @@ import android.os.Environment
 import android.content.Context
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalContext
+import com.google.firebase.firestore.FirebaseFirestore
+import com.rajeducational.erp.ui.components.AttendancePercentageBadge
+import com.rajeducational.erp.ui.components.AttendanceStatsCard
 
 @Composable
 fun TeacherBottomNavigationBar(navController: NavController, currentRoute: String) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember { context.getSharedPreferences("TeacherPrefs", android.content.Context.MODE_PRIVATE) }
     val teacherId = prefs.getString("teacher_id", "") ?: ""
-    var unreadCount by remember { mutableStateOf(0) }
+    val teacherCollege = prefs.getString("teacher_college", "") ?: ""
+    val teacherCourses = prefs.getStringSet("teacher_courses", setOf(prefs.getString("teacher_course", ""))) ?: setOf()
+    val teacherYears = prefs.getStringSet("teacher_years", emptySet()) ?: emptySet()
+    var studentUnreadCount by remember { mutableStateOf(0) }
+    var adminUnreadCount by remember { mutableStateOf(0) }
+    val unreadCount = studentUnreadCount + adminUnreadCount
 
     LaunchedEffect(teacherId) {
         if (teacherId.isNotEmpty()) {
-            com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("student_chats")
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            db.collection("student_chats")
                 .whereEqualTo("teacherId", teacherId)
                 .addSnapshotListener { snapshot, _ ->
                     if (snapshot != null) {
-                        unreadCount = snapshot.documents.count { doc ->
+                        studentUnreadCount = snapshot.documents.count { doc ->
+                            val senderId = doc.getString("senderId") ?: ""
+                            val isRead = doc.getBoolean("isRead") ?: false
+                            senderId != teacherId && !isRead
+                        }
+                    }
+                }
+            db.collection("teacher_chats")
+                .whereEqualTo("teacherId", teacherId)
+                .whereEqualTo("adminId", "admin")
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null) {
+                        adminUnreadCount = snapshot.documents.count { doc ->
                             val senderId = doc.getString("senderId") ?: ""
                             val isRead = doc.getBoolean("isRead") ?: false
                             senderId != teacherId && !isRead
@@ -326,6 +348,54 @@ fun TeacherDashboardScreen(navController: NavController) {
     var studentRatings by remember { mutableStateOf<List<com.rajeducational.erp.ui.admin.TeacherReview>>(emptyList()) }
     var managementReview by remember { mutableStateOf<com.rajeducational.erp.ui.admin.TeacherReview?>(null) }
 
+    var showQrDialog by remember { mutableStateOf(false) }
+    var qrContentString by remember { mutableStateOf("") }
+    var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var secondsRemaining by remember { mutableIntStateOf(15) }
+    var expandedApprovals by remember { mutableStateOf(false) }
+    var expandedAnnouncements by remember { mutableStateOf(false) }
+    var expandedAdminFeatures by remember { mutableStateOf(false) }
+    
+    var adminFeatures by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    var holidayState by remember { mutableStateOf<com.rajeducational.erp.utils.HolidayHelper.HolidayCheckResult?>(null) }
+
+    LaunchedEffect(teacherCollege) {
+        val tz = java.util.TimeZone.getTimeZone("Asia/Kolkata")
+        val cal = java.util.Calendar.getInstance(tz)
+        if (cal.get(java.util.Calendar.DAY_OF_WEEK) == java.util.Calendar.SUNDAY) {
+            holidayState = com.rajeducational.erp.utils.HolidayHelper.HolidayCheckResult(true, "Sunday")
+        } else if (teacherCollege.isNotEmpty()) {
+            val res = com.rajeducational.erp.utils.HolidayHelper.checkHolidayForTeacherStaff(teacherCollege)
+            holidayState = res
+        }
+    }
+
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            try {
+                val doc = com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("teachers").document(teacherId).get().await()
+                val features = (doc.get("adminFeatures") as? Map<String, Any>)?.mapValues { it.value as? Boolean ?: false } ?: emptyMap()
+                adminFeatures = features
+            } catch(e: Exception) {}
+        }
+    }
+
+    LaunchedEffect(showQrDialog, teacherId) {
+        if (showQrDialog && teacherId.isNotEmpty()) {
+            while (showQrDialog) {
+                val ts = System.currentTimeMillis()
+                qrContentString = "teacher_attendance_qr:${teacherId}:${ts}"
+                qrBitmap = com.rajeducational.erp.ui.admin.generateQrCode(qrContentString)
+                secondsRemaining = 15
+                for (i in 15 downTo 1) {
+                    if (!showQrDialog) break
+                    secondsRemaining = i
+                    kotlinx.coroutines.delay(1000)
+                }
+            }
+        }
+    }
+
     LaunchedEffect(teacherId) {
         if (teacherId.isNotBlank()) {
             firestore.collection("teacher_reviews").whereEqualTo("teacherId", teacherId).addSnapshotListener { snapshot, _ ->
@@ -391,7 +461,15 @@ fun TeacherDashboardScreen(navController: NavController) {
                     Box(modifier = Modifier.size(50.dp).clip(CircleShape).background(AppColors.Teacher), contentAlignment = Alignment.Center) { Text(teacherName.firstOrNull()?.toString() ?: "T", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column { 
-                        Text(teacherName, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(teacherName, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            AttendancePercentageBadge(
+                                studentId = teacherId,
+                                backgroundColor = AppColors.Teacher.copy(alpha = 0.15f),
+                                textColor = AppColors.Teacher
+                            )
+                        }
                         Text("${teacherCourses.joinToString(", ")} | $teacherCollege", fontSize = 13.sp, color = AppColors.TextSecondary) 
                         if (teacherYears.isNotEmpty()) {
                             Text("Batches: ${teacherYears.joinToString(", ")}", fontSize = 12.sp, color = AppColors.TextSecondary)
@@ -399,24 +477,233 @@ fun TeacherDashboardScreen(navController: NavController) {
                     }
                 }
             }
-            // Student Rating Card
-            Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Student Rating", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextSecondary)
-                    Text(String.format("%.1f / 5", averageStudentRating), fontSize = 32.sp, fontWeight = FontWeight.Bold, color = AppColors.Student)
-                    Text("$studentReviewCount reviews (anonymous)", fontSize = 12.sp, color = AppColors.TextSecondary)
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (holidayState?.isHoliday == true) {
+                val isSunday = holidayState?.holidayName?.equals("Sunday", ignoreCase = true) == true
+                val messageTitle = if (isSunday) "Sunday" else "Holiday Today"
+                val messageBody = if (isSunday) {
+                    "Today is Sunday, the college will be off, and your attendance won't be affected."
+                } else {
+                    "Today is a holiday (${holidayState?.holidayName}), the college will be off, and your attendance won't be affected."
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = if (isSunday) Color(0xFFE8F5E9) else Color(0xFFFFF9C4)),
+                    shape = RoundedCornerShape(16.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (isSunday) Color(0xFF81C784) else Color(0xFFFBC02D))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (isSunday) Icons.Default.CalendarMonth else Icons.Default.Celebration,
+                            contentDescription = "Holiday",
+                            tint = if (isSunday) Color(0xFF2E7D32) else Color(0xFFF57F17),
+                            modifier = Modifier.size(32.dp)
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(
+                                text = messageTitle,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSunday) Color(0xFF1B5E20) else Color(0xFF5D4037),
+                                fontSize = 16.sp
+                             )
+                             Text(
+                                 text = messageBody,
+                                 color = if (isSunday) Color(0xFF2E7D32) else Color(0xFF795548),
+                                 fontSize = 14.sp
+                             )
+                         }
+                     }
+                 }
+                 Spacer(modifier = Modifier.height(16.dp))
+             }
+
+             AttendanceStatsCard(
+                studentId = teacherId,
+                modifier = Modifier.padding(horizontal = 16.dp),
+                cardColor = Color.White
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clickable { showQrDialog = true },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QrCode,
+                        contentDescription = "QR Attendance",
+                        tint = AppColors.Teacher
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            text = "Give Attendance by QR Code",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AppColors.Navy
+                        )
+                        Text(
+                            text = "Quickly mark your daily attendance using QR",
+                            fontSize = 12.sp,
+                            color = AppColors.TextSecondary
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = "Go",
+                        tint = AppColors.TextSecondary
+                    )
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            // Composite Score
-            Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(12.dp)) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Composite Score", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextSecondary)
-                    Text(String.format("%.1f%%", combinedScore), fontSize = 32.sp, fontWeight = FontWeight.Bold, color = AppColors.Teacher)
-                    Text(compositeTextLabel, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Teacher)
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clickable { navController.navigate("teacher_daily_teaching_plan") },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Assignment,
+                        contentDescription = "Daily Teaching Plan",
+                        tint = AppColors.Teacher
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            text = "Daily Teaching Plan",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = AppColors.Navy
+                        )
+                        Text(
+                            text = "Input and manage your daily classroom topic plan",
+                            fontSize = 12.sp,
+                            color = AppColors.TextSecondary
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = "Go",
+                        tint = AppColors.TextSecondary
+                    )
                 }
             }
         }
+    }
+
+    if (showQrDialog) {
+        val activity = context as? android.app.Activity
+        DisposableEffect(Unit) {
+            activity?.window?.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+            onDispose {
+                activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { showQrDialog = false },
+            title = {
+                Text(
+                    text = "Give Attendance by QR Code",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.Navy
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Show this QR code to the school scanner.",
+                        fontSize = 14.sp,
+                        color = AppColors.TextSecondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
+                    if (qrBitmap != null) {
+                        Image(
+                            bitmap = qrBitmap!!.asImageBitmap(),
+                            contentDescription = "Attendance QR Code",
+                            modifier = Modifier
+                                .size(240.dp)
+                                .background(Color.White)
+                                .padding(8.dp)
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(240.dp)
+                                .background(Color.LightGray.copy(alpha = 0.3f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = AppColors.Teacher)
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text(
+                        text = "Screenshots are disabled. You cannot do a screenshot of the QR code. This is illegal.",
+                        fontSize = 12.sp,
+                        color = Color.Red,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    Text(
+                        text = "Refreshing in $secondsRemaining seconds...",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = AppColors.Teacher
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    LinearProgressIndicator(
+                        progress = { secondsRemaining / 120f },
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                        color = AppColors.Teacher,
+                        trackColor = Color.LightGray.copy(alpha = 0.3f)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showQrDialog = false }
+                ) {
+                    Text("Close", color = AppColors.Teacher)
+                }
+            }
+        )
     }
 }
 
@@ -425,8 +712,6 @@ fun TeacherDashboardScreen(navController: NavController) {
 fun TeacherStudentsScreen(navController: NavController) {
     var search by remember { mutableStateOf("") }
     var students by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
-    var allStudents by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
-    var showAllStudents by remember { mutableStateOf(false) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = context.getSharedPreferences("TeacherPrefs", android.content.Context.MODE_PRIVATE)
@@ -434,6 +719,7 @@ fun TeacherStudentsScreen(navController: NavController) {
     val teacherCollege = prefs.getString("teacher_college", "") ?: ""
     val teacherCourses = prefs.getStringSet("teacher_courses", setOf(prefs.getString("teacher_course", ""))) ?: setOf()
     val teacherYears = prefs.getStringSet("teacher_years", emptySet()) ?: emptySet()
+
     
     val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
 
@@ -449,7 +735,6 @@ fun TeacherStudentsScreen(navController: NavController) {
                         val fetchedStudents = snapshot.documents.map { doc ->
                             doc.data ?: emptyMap()
                         }
-                        allStudents = fetchedStudents
                         students = fetchedStudents.filter {
                             val c = it["course"] as? String ?: ""
                             val s = it["session"] as? String ?: ""
@@ -461,8 +746,7 @@ fun TeacherStudentsScreen(navController: NavController) {
         }
     }
 
-    val displayList = if (showAllStudents) allStudents else students
-    val filteredStudents = displayList.filter {
+    val filteredStudents = students.filter {
         val name = it["fullName"] as? String ?: ""
         val id = it["id"] as? String ?: ""
         val course = it["course"] as? String ?: ""
@@ -472,11 +756,11 @@ fun TeacherStudentsScreen(navController: NavController) {
     Scaffold(
         topBar = { 
             TopAppBar(
-                title = { Text(if (showAllStudents) "All Students" else "My Students") }, 
+                title = { Text("My Students") }, 
                 navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, 
                 actions = {
-                    TextButton(onClick = { showAllStudents = !showAllStudents }) {
-                        Text(if (showAllStudents) "My Students" else "See All Students", color = Color.White, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { navController.navigate("teacher_all_students") }) {
+                        Text("See All Students", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Teacher, titleContentColor = Color.White, navigationIconContentColor = Color.White)
@@ -494,6 +778,7 @@ fun TeacherStudentsScreen(navController: NavController) {
                     val student = filteredStudents[index]
                     val name = student["fullName"] as? String ?: "Unknown"
                     val id = student["id"] as? String ?: ""
+                    val profileUrl = student["profileUrl"] as? String
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -502,9 +787,44 @@ fun TeacherStudentsScreen(navController: NavController) {
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(AppColors.Teacher), contentAlignment = Alignment.Center) { Text(name.firstOrNull()?.toString() ?: "?", color = Color.White, fontWeight = FontWeight.Bold) }
+                            if (profileUrl.isNullOrEmpty()) {
+                                Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(AppColors.Teacher), contentAlignment = Alignment.Center) { Text(name.firstOrNull()?.toString() ?: "?", color = Color.White, fontWeight = FontWeight.Bold) }
+                            } else {
+                                com.rajeducational.erp.ui.components.ProfileImage(
+                                    urlOrBase64 = profileUrl,
+                                    modifier = Modifier.size(40.dp).clip(CircleShape),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                            }
                             Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) { Text(name, fontWeight = FontWeight.SemiBold); Text(id, fontSize = 12.sp, color = AppColors.TextSecondary) }
+                            Column(modifier = Modifier.weight(1f)) { 
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f, fill = false))
+                                    val isAttending = student["isAttending"] as? Boolean ?: true
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Surface(
+                                        color = if (isAttending) AppColors.Student.copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
+                                        contentColor = if (isAttending) AppColors.Student else Color.Red,
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isAttending) "Attending" else "Non-attending",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(id, fontSize = 12.sp, color = AppColors.TextSecondary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    AttendancePercentageBadge(
+                                        studentId = id,
+                                        backgroundColor = AppColors.Teacher.copy(alpha = 0.15f),
+                                        textColor = AppColors.Teacher
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -516,6 +836,7 @@ fun TeacherStudentsScreen(navController: NavController) {
         val s = selectedStudent!!
         val name = s["fullName"] as? String ?: "N/A"
         val id = s["id"] as? String ?: "N/A"
+        val profileUrl = s["profileUrl"] as? String
         val phone = s["phone"] as? String ?: "N/A"
         val email = s["email"] as? String ?: "N/A"
         val address = s["address"] as? String ?: "N/A"
@@ -541,6 +862,15 @@ fun TeacherStudentsScreen(navController: NavController) {
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    if (!profileUrl.isNullOrEmpty()) {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            com.rajeducational.erp.ui.components.ProfileImage(
+                                urlOrBase64 = profileUrl,
+                                modifier = Modifier.size(100.dp).clip(CircleShape),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                            )
+                        }
+                    }
                     DetailDialogRow(label = "Full Name", value = name, icon = Icons.Default.Person)
                     DetailDialogRow(label = "App ID", value = id, icon = Icons.Default.Info)
                     DetailDialogRow(label = "Phone", value = phone, icon = Icons.Default.Phone)
@@ -551,6 +881,11 @@ fun TeacherStudentsScreen(navController: NavController) {
                     DetailDialogRow(label = "Session", value = session, icon = Icons.Default.DateRange)
                     DetailDialogRow(label = "Current Password", value = currentPassword, icon = Icons.Default.Lock)
 
+                    Spacer(modifier = Modifier.height(10.dp))
+                    AttendanceStatsCard(
+                        studentId = id,
+                        cardColor = AppColors.Teacher.copy(alpha = 0.05f)
+                    )
                     Spacer(modifier = Modifier.height(10.dp))
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
@@ -717,6 +1052,11 @@ fun TeacherRatingsScreen(navController: NavController) {
 
     var studentRatings by remember { mutableStateOf<List<com.rajeducational.erp.ui.admin.TeacherReview>>(emptyList()) }
     var managementReview by remember { mutableStateOf<com.rajeducational.erp.ui.admin.TeacherReview?>(null) }
+    
+    var showStudentRatings by remember { mutableStateOf(false) }
+    var showManagementRatings by remember { mutableStateOf(false) }
+    
+    val dateFormatter = remember { java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()) }
 
     LaunchedEffect(teacherId) {
         if (teacherId.isNotBlank()) {
@@ -751,7 +1091,12 @@ fun TeacherRatingsScreen(navController: NavController) {
         bottomBar = { TeacherBottomNavigationBar(navController, "teacher_ratings") }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
-            Card(shape = RoundedCornerShape(12.dp)) {
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { navController.navigate("teacher_student_ratings_detail") }
+            ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Student Rating", fontWeight = FontWeight.SemiBold, color = AppColors.TextSecondary)
                     Row(modifier = Modifier.padding(top = 8.dp)) { 
@@ -761,10 +1106,22 @@ fun TeacherRatingsScreen(navController: NavController) {
                     }
                     Text(String.format("%.1f / 5", averageStudentRating), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = AppColors.Student)
                     Text("$studentReviewCount reviews (anonymous)", fontSize = 12.sp, color = AppColors.TextSecondary)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Click here to see all the ratings",
+                        fontSize = 12.sp,
+                        color = AppColors.Teacher,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
-            Card(shape = RoundedCornerShape(12.dp)) {
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { navController.navigate("teacher_management_ratings_detail") }
+            ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Management Rating", fontWeight = FontWeight.SemiBold, color = AppColors.TextSecondary)
                     Text(String.format("%.1f / 10", averageManagementRating), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = AppColors.Teacher)
@@ -772,13 +1129,13 @@ fun TeacherRatingsScreen(navController: NavController) {
                     if (managementScoreMap.isEmpty()) {
                         Text("No management reviews yet.", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp))
                     } else {
-                        managementScoreMap.forEach { (name, score) ->
-                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(name, fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.width(100.dp))
-                                LinearProgressIndicator(progress = { score / 10f }, modifier = Modifier.weight(1f).height(8.dp), color = AppColors.Teacher, trackColor = Color(0xFFE0E0E0))
-                                Text("$score", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(30.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
-                            }
-                        }
+                        Text(
+                            text = "Click here to see all the ratings",
+                            fontSize = 12.sp,
+                            color = AppColors.Teacher,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
                     }
                 }
             }
@@ -842,6 +1199,7 @@ fun TeacherProfileScreen(navController: NavController) {
     var selectedCourses by remember { mutableStateOf(setOf<com.rajeducational.erp.data.Course>()) }
     var expandedCollege by remember { mutableStateOf(false) }
     var expandedCourse by remember { mutableStateOf(false) }
+    var profileUrl by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         try {
@@ -854,6 +1212,19 @@ fun TeacherProfileScreen(navController: NavController) {
             selectedCourses = selectedCollege?.courses?.filter { it.name in courseNames }?.toSet() ?: emptySet()
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            try {
+                val doc = firestore.collection("teachers").document(teacherId).get().await()
+                if (doc.exists()) {
+                    profileUrl = doc.getString("profileUrl") ?: ""
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -938,7 +1309,24 @@ fun TeacherProfileScreen(navController: NavController) {
                     .background(AppColors.Teacher), 
                 contentAlignment = Alignment.Center
             ) { 
-                Text(teacherName.firstOrNull()?.toString() ?: "T", color = Color.White, fontSize = 48.sp, fontWeight = FontWeight.Bold) 
+                if (profileUrl.isNotEmpty()) {
+                    com.rajeducational.erp.ui.components.ProfileImage(
+                        urlOrBase64 = profileUrl,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(teacherName.firstOrNull()?.toString() ?: "T", color = Color.White, fontSize = 48.sp, fontWeight = FontWeight.Bold) 
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = { navController.navigate("face_registration/teacher/$teacherId") },
+                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Teacher),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(Icons.Default.Face, contentDescription = "Scan Face")
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(if (profileUrl.isNotEmpty()) "Update Face Scan" else "Register Face Photo")
             }
             Spacer(modifier = Modifier.height(16.dp))
             
@@ -1217,15 +1605,11 @@ fun TeacherGalleryScreen(navController: NavController) {
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
                 if (intent?.action == android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE) {
-                    downloadCompleteMessage = "Downloaded successfully"
+                    downloadCompleteMessage = "Photo downloaded in gallery"
                 }
             }
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), android.content.Context.RECEIVER_EXPORTED)
-        } else {
-            context.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE))
-        }
+        androidx.core.content.ContextCompat.registerReceiver(context, receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         onDispose {
             context.unregisterReceiver(receiver)
         }
@@ -1354,21 +1738,110 @@ fun TeacherGalleryScreen(navController: NavController) {
     }
 }
 
+@Composable
+fun TeacherVotingScreen(navController: NavController) {
+    com.rajeducational.erp.ui.common.VotingScreen(navController, "teacher")
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TeacherMoreScreen(navController: NavController) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember { context.getSharedPreferences("TeacherPrefs", android.content.Context.MODE_PRIVATE) }
     val teacherId = prefs.getString("teacher_id", "") ?: ""
-    var unreadCount by remember { mutableStateOf(0) }
+    var studentUnreadCount by remember { mutableStateOf(0) }
+    var adminUnreadCount by remember { mutableStateOf(0) }
+    val unreadCount = studentUnreadCount + adminUnreadCount
+
+    var showQrDialog by remember { mutableStateOf(false) }
+    var qrContentString by remember { mutableStateOf("") }
+    var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var secondsRemaining by remember { mutableIntStateOf(15) }
+    var expandedApprovals by remember { mutableStateOf(false) }
+    var expandedAnnouncements by remember { mutableStateOf(false) }
+    var expandedAdminFeatures by remember { mutableStateOf(false) }
+    var adminFeatures by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    var pendingAttendingApprovalsCount by remember { mutableStateOf(0) }
+    var pendingNonAttendingApprovalsCount by remember { mutableStateOf(0) }
+    val pendingApprovalsCount = pendingAttendingApprovalsCount + pendingNonAttendingApprovalsCount
 
     LaunchedEffect(teacherId) {
         if (teacherId.isNotEmpty()) {
-            com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("student_chats")
+            try {
+                val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                val teacherDoc = db.collection("teachers").document(teacherId).get().await()
+                val teacherCollege = teacherDoc.getString("collegeName") ?: teacherDoc.getString("college") ?: ""
+                val teacherCourses = teacherDoc.get("courses") as? List<String> ?: listOf(teacherDoc.getString("course") ?: teacherDoc.getString("departmentName") ?: "")
+                val teacherYears = teacherDoc.get("years") as? List<String> ?: emptyList()
+                
+                db.collection("students")
+                    .whereEqualTo("approvalStatus", "pending")
+                    .addSnapshotListener { snapshot, _ ->
+                        if (snapshot != null) {
+                            val matchingDocs = snapshot.documents.filter { doc ->
+                                val college = doc.getString("college") ?: ""
+                                val course = doc.getString("course") ?: ""
+                                val session = doc.getString("session") ?: ""
+                                college == teacherCollege && teacherCourses.contains(course) && teacherYears.contains(session)
+                            }
+                            pendingAttendingApprovalsCount = matchingDocs.count { doc ->
+                                doc.getBoolean("isAttending") ?: true
+                            }
+                            pendingNonAttendingApprovalsCount = matchingDocs.count { doc ->
+                                !(doc.getBoolean("isAttending") ?: true)
+                            }
+                        }
+                    }
+            } catch(e: Exception) {}
+        }
+    }
+
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            try {
+                val doc = com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("teachers").document(teacherId).get().await()
+                val features = (doc.get("adminFeatures") as? Map<String, Any>)?.mapValues { it.value as? Boolean ?: false } ?: emptyMap()
+                adminFeatures = features
+            } catch(e: Exception) {}
+        }
+    }
+
+    LaunchedEffect(showQrDialog, teacherId) {
+        if (showQrDialog) {
+            while (showQrDialog) {
+                val ts = System.currentTimeMillis()
+                qrContentString = "teacher_attendance_qr:${teacherId}:${ts}"
+                qrBitmap = com.rajeducational.erp.ui.admin.generateQrCode(qrContentString)
+                secondsRemaining = 15
+                for (i in 15 downTo 1) {
+                    if (!showQrDialog) break
+                    secondsRemaining = i
+                    kotlinx.coroutines.delay(1000)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            db.collection("student_chats")
                 .whereEqualTo("teacherId", teacherId)
                 .addSnapshotListener { snapshot, _ ->
                     if (snapshot != null) {
-                        unreadCount = snapshot.documents.count { doc ->
+                        studentUnreadCount = snapshot.documents.count { doc ->
+                            val senderId = doc.getString("senderId") ?: ""
+                            val isRead = doc.getBoolean("isRead") ?: false
+                            senderId != teacherId && !isRead
+                        }
+                    }
+                }
+            db.collection("teacher_chats")
+                .whereEqualTo("teacherId", teacherId)
+                .whereEqualTo("adminId", "admin")
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null) {
+                        adminUnreadCount = snapshot.documents.count { doc ->
                             val senderId = doc.getString("senderId") ?: ""
                             val isRead = doc.getBoolean("isRead") ?: false
                             senderId != teacherId && !isRead
@@ -1382,46 +1855,128 @@ fun TeacherMoreScreen(navController: NavController) {
         topBar = { TopAppBar(title = { Text("More Options") }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Teacher, titleContentColor = Color.White)) },
         bottomBar = { TeacherBottomNavigationBar(navController, "teacher_more") }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).padding(16.dp)) {
+        Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
             Card(
-                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_student_qr_registration") },
+                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_attendance_control_center") },
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.QrCode, "Student Registration", tint = AppColors.Teacher)
+                    Icon(Icons.Default.QrCodeScanner, "Students Attendance", tint = AppColors.Teacher)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Student Registration Through QR Code", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text("Students Attendance Through QR Code", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     Spacer(modifier = Modifier.weight(1f))
                     Icon(Icons.Default.ChevronRight, "Go", tint = AppColors.TextSecondary)
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
             Card(
-                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_send_announcement") },
+                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_attendance_report_control") },
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Campaign, "Send Announcements (All)", tint = AppColors.Teacher)
+                    Icon(Icons.Default.PictureAsPdf, "Attendance Report Generation", tint = AppColors.Teacher)
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text("Send Announcements (All)", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text("Attendance Report Generation", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     Spacer(modifier = Modifier.weight(1f))
                     Icon(Icons.Default.ChevronRight, "Go", tint = AppColors.TextSecondary)
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
             Card(
-                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_send_local_announcement") },
+                modifier = Modifier.fillMaxWidth().clickable { expandedApprovals = !expandedApprovals },
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
-                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Campaign, "Send Announcements to My Students", tint = AppColors.Teacher)
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Text("Send Announcements to My Students", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                    Spacer(modifier = Modifier.weight(1f))
-                    Icon(Icons.Default.ChevronRight, "Go", tint = AppColors.TextSecondary)
+                Column {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.HowToReg, "Approvals", tint = AppColors.Teacher)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Approvals", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                            if (pendingApprovalsCount > 0) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(Color.Red, CircleShape)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        Icon(if (expandedApprovals) Icons.Default.ExpandLess else Icons.Default.ExpandMore, "Expand", tint = AppColors.TextSecondary)
+                    }
+                    if (expandedApprovals) {
+                        Column(modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_attending_approvals") }.padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Attending Students Approval", 
+                                    fontSize = 15.sp, color = AppColors.Navy,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (pendingAttendingApprovalsCount > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(Color.Red, CircleShape)
+                                    )
+                                }
+                            }
+                            Divider(color = Color.LightGray.copy(alpha = 0.5f))
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_non_attending_approvals") }.padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Non-Attending Students Approval", 
+                                    fontSize = 15.sp, color = AppColors.Navy,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (pendingNonAttendingApprovalsCount > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(Color.Red, CircleShape)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { expandedAnnouncements = !expandedAnnouncements },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Column {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Campaign, "Announcements", tint = AppColors.Teacher)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Announcements", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Spacer(modifier = Modifier.weight(1f))
+                        Icon(if (expandedAnnouncements) Icons.Default.ExpandLess else Icons.Default.ExpandMore, "Expand", tint = AppColors.TextSecondary)
+                    }
+                    if (expandedAnnouncements) {
+                        Column(modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 16.dp)) {
+                            Text(
+                                "Send Announcements (All)", 
+                                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_send_announcement") }.padding(vertical = 12.dp),
+                                fontSize = 15.sp, color = AppColors.Navy
+                            )
+                            Divider(color = Color.LightGray.copy(alpha = 0.5f))
+                            Text(
+                                "Send Announcements to My Students", 
+                                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_send_local_announcement") }.padding(vertical = 12.dp),
+                                fontSize = 15.sp, color = AppColors.Navy
+                            )
+                        }
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -1441,7 +1996,7 @@ fun TeacherMoreScreen(navController: NavController) {
                                 modifier = Modifier
                                     .size(8.dp)
                                     .background(Color.Red, CircleShape)
-                            )
+                             )
                         }
                     }
                     Spacer(modifier = Modifier.weight(1f))
@@ -1450,12 +2005,27 @@ fun TeacherMoreScreen(navController: NavController) {
             }
             Spacer(modifier = Modifier.height(16.dp))
             Card(
+                modifier = Modifier.fillMaxWidth().clickable { navController.navigate("teacher_voting") },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.HowToVote, "Voting", tint = AppColors.Teacher)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Voting", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(Icons.Default.ChevronRight, "Go", tint = AppColors.TextSecondary)
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Card(
                 modifier = Modifier.fillMaxWidth().clickable { navController.navigate("admin_gallery_upload_center") },
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.PhotoLibrary, "Gallery Photo Upload Center", tint = AppColors.Teacher)
+                    Icon(Icons.Default.Image, "Gallery Photo Upload Center", tint = AppColors.Teacher)
                     Spacer(modifier = Modifier.width(16.dp))
                     Text("Gallery Photo Upload Center", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     Spacer(modifier = Modifier.weight(1f))
@@ -1463,6 +2033,7 @@ fun TeacherMoreScreen(navController: NavController) {
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
+
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { navController.navigate("admin_event_control_center") },
                 shape = RoundedCornerShape(12.dp),
@@ -1476,7 +2047,176 @@ fun TeacherMoreScreen(navController: NavController) {
                     Icon(Icons.Default.ChevronRight, "Go", tint = AppColors.TextSecondary)
                 }
             }
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            val activeFeatures = adminFeatures.filterValues { it }.keys.toList()
+            if (activeFeatures.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable { expandedAdminFeatures = !expandedAdminFeatures },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = AppColors.Admin.copy(alpha = 0.1f))
+                ) {
+                    Column {
+                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.AdminPanelSettings, "Admin Control Menu", tint = AppColors.Admin)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text("Admin Control Menu", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AppColors.Admin)
+                            Spacer(modifier = Modifier.weight(1f))
+                            Icon(if (expandedAdminFeatures) Icons.Default.ExpandLess else Icons.Default.ExpandMore, "Expand", tint = AppColors.Admin)
+                        }
+                        if (expandedAdminFeatures) {
+                            Column(modifier = Modifier.padding(start = 56.dp, end = 16.dp, bottom = 16.dp)) {
+                                val featureMap = mapOf(
+                                    "admin_college_control" to "College Control Centre",
+                                    "admin_fee_structure_control" to "College Fee Structure Control Center",
+                                    "admin_gallery_upload_center" to "Gallery Photo Upload Center",
+                                    "admin_event_control_center" to "Event Control Center",
+                                    "admin_guest_messages_control" to "Guest Messages",
+                                    "admin_announcement_control" to "Common Announcement Control Center",
+                                    "admin_view_students" to "View Students",
+                                    "admin_council_voting_control" to "Council Voting Control",
+                                    "admin_student_messages_control" to "Student Messages",
+                                    "admin_fee_reminder_control" to "Fees Control Panel",
+                                    "admin_teacher_qr_control" to "Teacher and Staff Registration by QR Code",
+                                    "admin_registered_teachers" to "Registered Teachers and Staff",
+                                    "admin_teacher_messages" to "Teacher and Staff Messages",
+                                    "admin_teacher_staff_attendance_control" to "Teacher and Staff Attendance Control",
+                                    "admin_daily_teaching_plan_control" to "Teacher Daily Teaching Plan",
+                                    "admin_statistics_control" to "Dashboard Edit Control Panel",
+                                    "admin_developer_options" to "Developer Options",
+                                    "admin_give_holiday" to "Give a Holiday",
+                                    "admin_teacher_review_criteria_control" to "Teacher Review Criteria Control",
+                                    "admin_teacher_reviews" to "Teacher Reviews Monitor",
+                                    "admin_management_review_criteria_control" to "Management Review Criteria Control",
+                                    "admin_management_review_control" to "Management Reviews Monitor",
+                                    "admin_add_admin" to "Add Admin / Monitor Admins",
+                                    "admin_generate_reports" to "Generate Reports Control"
+                                )
+                                activeFeatures.forEachIndexed { index, route ->
+                                    val label = featureMap[route] ?: route
+                                    Text(
+                                        label, 
+                                        modifier = Modifier.fillMaxWidth().clickable { navController.navigate(route) }.padding(vertical = 12.dp),
+                                        fontSize = 15.sp, color = AppColors.Navy
+                                    )
+                                    if (index < activeFeatures.size - 1) {
+                                        Divider(color = Color.LightGray.copy(alpha = 0.5f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { showQrDialog = true },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.QrCode, "QR Attendance", tint = AppColors.Teacher)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Give Attendance by QR Code", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(Icons.Default.ChevronRight, "Go", tint = AppColors.TextSecondary)
+                }
+            }
         }
+    }
+
+    if (showQrDialog) {
+        val activity = context as? android.app.Activity
+        DisposableEffect(Unit) {
+            activity?.window?.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+            onDispose {
+                activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { showQrDialog = false },
+            title = {
+                Text(
+                    text = "Give Attendance by QR Code",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.Navy
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Show this QR code to the school scanner.",
+                        fontSize = 14.sp,
+                        color = AppColors.TextSecondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
+                    if (qrBitmap != null) {
+                        Image(
+                            bitmap = qrBitmap!!.asImageBitmap(),
+                            contentDescription = "Attendance QR Code",
+                            modifier = Modifier
+                                .size(240.dp)
+                                .background(Color.White)
+                                .padding(8.dp)
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(240.dp)
+                                .background(Color.LightGray.copy(alpha = 0.3f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = AppColors.Teacher)
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text(
+                        text = "Screenshots are disabled. You cannot do a screenshot of the QR code. This is illegal.",
+                        fontSize = 12.sp,
+                        color = Color.Red,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    Text(
+                        text = "Refreshing in $secondsRemaining seconds...",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = AppColors.Teacher
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    LinearProgressIndicator(
+                        progress = { secondsRemaining / 120f },
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                        color = AppColors.Teacher,
+                        trackColor = Color.LightGray.copy(alpha = 0.3f)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showQrDialog = false }
+                ) {
+                    Text("Close", color = AppColors.Teacher)
+                }
+            }
+        )
     }
 }
 
@@ -1492,6 +2232,10 @@ fun TeacherSendAnnouncementScreen(navController: NavController) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = context.getSharedPreferences("TeacherPrefs", android.content.Context.MODE_PRIVATE)
     val teacherName = prefs.getString("teacher_name", "Teacher") ?: "Teacher"
+
+    val teacherCollege = prefs.getString("teacher_college", "") ?: ""
+    val teacherCourses = prefs.getStringSet("teacher_courses", setOf(prefs.getString("teacher_course", ""))) ?: setOf()
+    val teacherYears = prefs.getStringSet("teacher_years", emptySet()) ?: emptySet()
     val teacherId = prefs.getString("teacher_id", "") ?: ""
     val coroutineScope = rememberCoroutineScope()
     var myAnnouncements by remember { mutableStateOf<List<com.rajeducational.erp.data.Announcement>>(emptyList()) }
@@ -1773,7 +2517,10 @@ data class TeacherStudentContact(
     val name: String,
     val college: String,
     val course: String,
-    val session: String
+    val session: String,
+    val profileUrl: String = "",
+    val isAttending: Boolean = true,
+    val role: String = "Student"
 )
 
 data class TeacherChatMessage(
@@ -1801,17 +2548,84 @@ fun TeacherMessagesScreen(navController: NavController) {
     val prefs = context.getSharedPreferences("TeacherPrefs", android.content.Context.MODE_PRIVATE)
     val teacherId = prefs.getString("teacher_id", "") ?: ""
     val teacherName = prefs.getString("teacher_name", "Teacher") ?: "Teacher"
+    var teacherCollege by remember { mutableStateOf(prefs.getString("teacher_college", "") ?: "") }
+    var teacherCourses by remember { mutableStateOf(prefs.getStringSet("teacher_courses", setOf(prefs.getString("teacher_course", ""))) ?: setOf()) }
+    var teacherYears by remember { mutableStateOf(prefs.getStringSet("teacher_years", emptySet()) ?: emptySet()) }
+    
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            try {
+                val doc = firestore.collection("teachers").document(teacherId).get().await()
+                if (doc.exists()) {
+                    val col = doc.getString("collegeName") ?: doc.getString("college") ?: ""
+                    val crs = doc.get("courses") as? List<String> ?: listOf(doc.getString("course") ?: doc.getString("departmentName") ?: "")
+                    val yrs = doc.get("years") as? List<String> ?: emptyList()
+                    
+                    if (col.isNotEmpty()) teacherCollege = col
+                    if (crs.isNotEmpty()) teacherCourses = crs.toSet()
+                    if (yrs.isNotEmpty()) teacherYears = yrs.toSet()
+                    
+                    prefs.edit()
+                        .putString("teacher_college", col)
+                        .putStringSet("teacher_courses", crs.toSet())
+                        .putStringSet("teacher_years", yrs.toSet())
+                        .apply()
+                }
+            } catch(e: Exception) {}
+        }
+    }
     
     var selectedStudent by remember { mutableStateOf<TeacherStudentContact?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     
+    var filterType by remember { mutableStateOf("ALL_CONTACTS") }
+    
     // Student list state
-    var studentList by remember { mutableStateOf<List<TeacherStudentContact>>(emptyList()) }
+    var studentsRaw by remember { mutableStateOf<List<TeacherStudentContact>>(emptyList()) }
+    var teachersRaw by remember { mutableStateOf<List<TeacherStudentContact>>(emptyList()) }
+    var staffsRaw by remember { mutableStateOf<List<TeacherStudentContact>>(emptyList()) }
+    var adminsRaw by remember { mutableStateOf<List<TeacherStudentContact>>(emptyList()) }
+    
+    val studentList = remember(studentsRaw, teachersRaw, staffsRaw, adminsRaw, teacherId, filterType, teacherCollege, teacherCourses, teacherYears) {
+        val baseStudents = studentsRaw.filter { it.id != teacherId }
+        val baseTeachers = teachersRaw.filter { it.id != teacherId }
+        val baseStaffs = staffsRaw.filter { it.id != teacherId }
+        val baseAdmins = if (adminsRaw.isEmpty()) {
+            listOf(
+                TeacherStudentContact(
+                    id = "admin",
+                    name = "College Administrator",
+                    college = "Central Administration",
+                    course = "Admin",
+                    session = "Admin",
+                    profileUrl = "",
+                    role = "Admin"
+                )
+            )
+        } else {
+            adminsRaw.filter { it.id != teacherId }
+        }
+
+        when (filterType) {
+            "MY_STUDENTS" -> {
+                baseStudents.filter { s ->
+                    s.college == teacherCollege && teacherCourses.contains(s.course) && teacherYears.contains(s.session)
+                }
+            }
+            "ALL_STUDENTS" -> baseStudents
+            "TEACHERS" -> baseTeachers
+            "STAFFS" -> baseStaffs
+            "ADMINS" -> baseAdmins
+            else -> { // ALL_CONTACTS
+                baseStudents + baseTeachers + baseStaffs + baseAdmins
+            }
+        }
+    }
     var isListLoading by remember { mutableStateOf(true) }
     var allTeacherChats by remember { mutableStateOf<List<TeacherChatMessage>>(emptyList()) }
     
     // Chat messages state
-    var chatMessages by remember { mutableStateOf<List<TeacherChatMessage>>(emptyList()) }
+    var adminChatMessages by remember { mutableStateOf<List<TeacherChatMessage>>(emptyList()) }
     var messageText by remember { mutableStateOf("") }
     var attachmentUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var attachmentName by remember { mutableStateOf("") }
@@ -1826,29 +2640,27 @@ fun TeacherMessagesScreen(navController: NavController) {
         }
     }
     
-    val teacherCollege = prefs.getString("teacher_college", "") ?: ""
-    val teacherCourses = prefs.getStringSet("teacher_courses", setOf(prefs.getString("teacher_course", ""))) ?: setOf()
-    val teacherYears = prefs.getStringSet("teacher_years", emptySet()) ?: emptySet()
-
-    // Load students for this teacher
-    LaunchedEffect(teacherId, teacherCollege) {
-        if (teacherId.isNotEmpty() && teacherCollege.isNotEmpty()) {
+    // Load students
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
             firestore.collection("students")
-                .whereEqualTo("college", teacherCollege)
                 .addSnapshotListener { snapshot, _ ->
                     if (snapshot != null) {
-                        studentList = snapshot.documents.mapNotNull { doc ->
+                        studentsRaw = snapshot.documents.mapNotNull { doc ->
                             val c = doc.getString("course") ?: ""
                             val s = doc.getString("session") ?: ""
-                            if (teacherCourses.contains(c) && teacherYears.contains(s)) {
-                                TeacherStudentContact(
-                                    id = doc.id,
-                                    name = doc.getString("fullName") ?: "Unknown Student",
-                                    college = doc.getString("college") ?: "N/A",
-                                    course = c,
-                                    session = s
-                                )
-                            } else null
+                            val col = doc.getString("college") ?: ""
+                            
+                            TeacherStudentContact(
+                                id = doc.id,
+                                name = doc.getString("fullName") ?: "Unknown Student",
+                                college = col,
+                                course = c,
+                                session = s,
+                                profileUrl = doc.getString("profileUrl") ?: "",
+                                isAttending = doc.getBoolean("isAttending") ?: true,
+                                role = "Student"
+                            )
                         }
                     }
                     isListLoading = false
@@ -1886,23 +2698,82 @@ fun TeacherMessagesScreen(navController: NavController) {
         }
     }
     
-    // Load chat thread for selected student
-    DisposableEffect(selectedStudent) {
-        if (selectedStudent != null && teacherId.isNotEmpty()) {
-            val listener = firestore.collection("student_chats")
-                .whereEqualTo("studentId", selectedStudent!!.id)
-                .whereEqualTo("teacherId", teacherId)
+    
+    // Load teachers
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            firestore.collection("teachers").addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    teachersRaw = snapshot.documents.mapNotNull { doc ->
+                        TeacherStudentContact(
+                            id = doc.id,
+                            name = doc.getString("name") ?: "Teacher",
+                            college = doc.getString("collegeName") ?: doc.getString("college") ?: "",
+                            course = doc.getString("course") ?: "",
+                            session = "Teacher",
+                            profileUrl = doc.getString("profileUrl") ?: "",
+                            role = "Teacher"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Load staffs
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            firestore.collection("staffs").addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    staffsRaw = snapshot.documents.mapNotNull { doc ->
+                        TeacherStudentContact(
+                            id = doc.id,
+                            name = doc.getString("name") ?: "Staff",
+                            college = doc.getString("collegeName") ?: doc.getString("college") ?: "",
+                            course = doc.getString("course") ?: doc.getString("departmentName") ?: "",
+                            session = "Staff",
+                            profileUrl = doc.getString("profileUrl") ?: "",
+                            role = "Staff"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Load admins
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            firestore.collection("admins").addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    adminsRaw = snapshot.documents.mapNotNull { doc ->
+                        val username = doc.getString("username") ?: ""
+                        if (username.isNotEmpty()) {
+                            TeacherStudentContact(
+                                id = "admin",
+                                name = username,
+                                college = "Central Administration",
+                                course = "Admin",
+                                session = "Admin",
+                                profileUrl = "",
+                                role = "Admin"
+                            )
+                        } else null
+                    }
+                }
+            }
+        }
+    }
+    
+    // Load reverse chats for allTeacherChats
+    var reverseTeacherChats by remember { mutableStateOf<List<TeacherChatMessage>>(emptyList()) }
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            firestore.collection("student_chats")
+                .whereEqualTo("studentId", teacherId)
                 .addSnapshotListener { snapshot, _ ->
                     if (snapshot != null) {
-                        // Mark incoming messages as read
-                        for (doc in snapshot.documents) {
-                            val senderId = doc.getString("senderId") ?: ""
-                            val isRead = doc.getBoolean("isRead") ?: false
-                            if (senderId != teacherId && !isRead) {
-                                doc.reference.update("isRead", true)
-                            }
-                        }
-                        chatMessages = snapshot.documents.mapNotNull { doc ->
+                        reverseTeacherChats = snapshot.documents.mapNotNull { doc ->
                             TeacherChatMessage(
                                 id = doc.id,
                                 studentId = doc.getString("studentId") ?: "",
@@ -1917,29 +2788,82 @@ fun TeacherMessagesScreen(navController: NavController) {
                                 timestamp = doc.getLong("timestamp") ?: 0L,
                                 isRead = doc.getBoolean("isRead") ?: false
                             )
+                        }
+                    }
+                }
+        }
+    }
+    val combinedAllTeacherChats = remember(allTeacherChats, reverseTeacherChats) { allTeacherChats + reverseTeacherChats }
+
+    // Load admin chats in real-time
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotEmpty()) {
+            firestore.collection("teacher_chats")
+                .whereEqualTo("teacherId", teacherId)
+                .whereEqualTo("adminId", "admin")
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null) {
+                        adminChatMessages = snapshot.documents.mapNotNull { doc ->
+                            TeacherChatMessage(
+                                id = doc.id,
+                                studentId = "admin",
+                                studentName = doc.getString("adminName") ?: "Admin",
+                                teacherId = doc.getString("teacherId") ?: "",
+                                teacherName = doc.getString("teacherName") ?: "",
+                                senderId = doc.getString("senderId") ?: "",
+                                senderName = doc.getString("senderName") ?: "",
+                                message = doc.getString("message") ?: "",
+                                attachmentUrl = doc.getString("attachmentUrl") ?: "",
+                                attachmentName = doc.getString("attachmentName") ?: "",
+                                timestamp = doc.getLong("timestamp") ?: 0L,
+                                isRead = doc.getBoolean("isRead") ?: false
+                            )
                         }.sortedBy { it.timestamp }
                     }
                 }
-            onDispose {
-                listener.remove()
-            }
+        }
+    }
+
+    val chatMessages = remember(selectedStudent, combinedAllTeacherChats, adminChatMessages) {
+        val currentContact = selectedStudent
+        if (currentContact == null) {
+            emptyList()
+        } else if (currentContact.role == "Admin") {
+            adminChatMessages
         } else {
-            chatMessages = emptyList()
-            onDispose {}
+            combinedAllTeacherChats.filter { msg ->
+                (msg.studentId == currentContact.id && msg.teacherId == teacherId) ||
+                (msg.studentId == teacherId && msg.teacherId == currentContact.id)
+            }.sortedBy { it.timestamp }
+        }
+    }
+
+    // Mark messages as read
+    LaunchedEffect(selectedStudent, chatMessages) {
+        if (selectedStudent != null && teacherId.isNotEmpty()) {
+            val unreadDocs = chatMessages.filter { it.senderId != teacherId && !it.isRead }
+            for (msg in unreadDocs) {
+                val collectionName = if (selectedStudent!!.role == "Admin") "teacher_chats" else "student_chats"
+                firestore.collection(collectionName).document(msg.id).update("isRead", true)
+            }
         }
     }
     
     // Filtered Students list sorted descending by newest message timestamp
-    val filteredStudents = remember(searchQuery, studentList, allTeacherChats) {
+    val filteredStudents = remember(searchQuery, studentList, combinedAllTeacherChats, adminChatMessages) {
         val list = studentList.filter {
             it.name.contains(searchQuery, ignoreCase = true) ||
             it.college.contains(searchQuery, ignoreCase = true) ||
             it.course.contains(searchQuery, ignoreCase = true)
         }
-        list.sortedByDescending { student ->
-            allTeacherChats
-                .filter { it.studentId == student.id }
-                .maxOfOrNull { it.timestamp } ?: 0L
+        list.sortedByDescending { contact ->
+            if (contact.role == "Admin") {
+                adminChatMessages.maxOfOrNull { it.timestamp } ?: 0L
+            } else {
+                combinedAllTeacherChats
+                    .filter { it.studentId == contact.id || it.teacherId == contact.id }
+                    .maxOfOrNull { it.timestamp } ?: 0L
+            }
         }
     }
     
@@ -1969,21 +2893,41 @@ fun TeacherMessagesScreen(navController: NavController) {
         if (text.trim().isEmpty() && fileUrl.isEmpty()) return
         if (selectedStudent == null || teacherId.isEmpty()) return
         
-        val msgData = hashMapOf(
-            "studentId" to selectedStudent!!.id,
-            "studentName" to selectedStudent!!.name,
-            "teacherId" to teacherId,
-            "teacherName" to teacherName,
-            "senderId" to teacherId,
-            "senderName" to teacherName,
-            "message" to text,
-            "attachmentUrl" to fileUrl,
-            "attachmentName" to fileName,
-            "timestamp" to System.currentTimeMillis(),
-            "isRead" to false
-        )
+        val msgData = if (selectedStudent!!.role == "Admin") {
+            // Message to Admin -> Save to teacher_chats
+            hashMapOf(
+                "teacherId" to teacherId,
+                "teacherName" to teacherName,
+                "adminId" to "admin",
+                "adminName" to selectedStudent!!.name,
+                "senderId" to teacherId,
+                "senderName" to teacherName,
+                "message" to text,
+                "attachmentUrl" to fileUrl,
+                "attachmentName" to fileName,
+                "timestamp" to System.currentTimeMillis(),
+                "isRead" to false
+            )
+        } else {
+            // Message to Student, Teacher, or Staff -> Save to student_chats
+            hashMapOf(
+                "studentId" to selectedStudent!!.id,
+                "studentName" to selectedStudent!!.name,
+                "teacherId" to teacherId,
+                "teacherName" to teacherName,
+                "senderId" to teacherId,
+                "senderName" to teacherName,
+                "message" to text,
+                "attachmentUrl" to fileUrl,
+                "attachmentName" to fileName,
+                "timestamp" to System.currentTimeMillis(),
+                "isRead" to false
+            )
+        }
         
-        firestore.collection("student_chats")
+        val collectionName = if (selectedStudent!!.role == "Admin") "teacher_chats" else "student_chats"
+        
+        firestore.collection(collectionName)
             .add(msgData)
             .addOnSuccessListener {
                 messageText = ""
@@ -2030,7 +2974,7 @@ fun TeacherMessagesScreen(navController: NavController) {
                         )
                         if (selectedStudent != null) {
                             Text(
-                                text = "Course: ${selectedStudent!!.course} | Session: ${selectedStudent!!.session}",
+                                text = "Role: ${selectedStudent!!.role} | Dept/Course: ${selectedStudent!!.course}",
                                 fontSize = 12.sp,
                                 color = Color.White.copy(alpha = 0.8f)
                             )
@@ -2050,6 +2994,40 @@ fun TeacherMessagesScreen(navController: NavController) {
                             contentDescription = "Back",
                             tint = Color.White
                         )
+                    }
+                },
+                actions = {
+                    if (selectedStudent == null) {
+                        var expanded by remember { mutableStateOf(false) }
+                        IconButton(onClick = { expanded = true }) {
+                            Icon(Icons.Default.MoreVert, "Filter Students", tint = Color.White)
+                        }
+                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text("All Contacts") },
+                                onClick = { filterType = "ALL_CONTACTS"; expanded = false }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("My Students") },
+                                onClick = { filterType = "MY_STUDENTS"; expanded = false }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("All Students") },
+                                onClick = { filterType = "ALL_STUDENTS"; expanded = false }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Teachers") },
+                                onClick = { filterType = "TEACHERS"; expanded = false }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Staff & Office") },
+                                onClick = { filterType = "STAFFS"; expanded = false }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Administrators") },
+                                onClick = { filterType = "ADMINS"; expanded = false }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -2124,17 +3102,41 @@ fun TeacherMessagesScreen(navController: NavController) {
                                         .padding(16.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(44.dp)
-                                            .background(AppColors.Teacher.copy(alpha = 0.15f), CircleShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.School,
-                                            contentDescription = null,
-                                            tint = AppColors.Teacher
+                                    if (student.profileUrl.isNotEmpty()) {
+                                        com.rajeducational.erp.ui.components.ProfileImage(
+                                            urlOrBase64 = student.profileUrl,
+                                            modifier = Modifier.size(44.dp).clip(CircleShape),
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
                                         )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(44.dp)
+                                                .background(
+                                                    when (student.role) {
+                                                        "Teacher" -> AppColors.Teacher.copy(alpha = 0.15f)
+                                                        "Staff" -> Color.Magenta.copy(alpha = 0.15f)
+                                                        "Admin" -> Color.DarkGray.copy(alpha = 0.15f)
+                                                        else -> AppColors.Teacher.copy(alpha = 0.15f)
+                                                    },
+                                                    CircleShape
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = when (student.role) {
+                                                    "Student" -> Icons.Default.School
+                                                    else -> Icons.Default.Person
+                                                },
+                                                contentDescription = null,
+                                                tint = when (student.role) {
+                                                    "Teacher" -> AppColors.Teacher
+                                                    "Staff" -> Color.Magenta
+                                                    "Admin" -> Color.DarkGray
+                                                    else -> AppColors.Teacher
+                                                }
+                                            )
+                                        }
                                     }
                                     
                                     Spacer(modifier = Modifier.width(16.dp))
@@ -2147,7 +3149,37 @@ fun TeacherMessagesScreen(navController: NavController) {
                                                 fontSize = 15.sp,
                                                 color = AppColors.Navy
                                             )
-                                            val unreadCount = allTeacherChats.count { it.studentId == student.id && it.senderId == student.id && !it.isRead }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            
+                                            // Role Badge
+                                            Surface(
+                                                color = when (student.role) {
+                                                    "Teacher" -> AppColors.Teacher.copy(alpha = 0.15f)
+                                                    "Staff" -> Color(0xFFE040FB).copy(alpha = 0.15f)
+                                                    "Admin" -> AppColors.Admin.copy(alpha = 0.15f)
+                                                    else -> AppColors.Student.copy(alpha = 0.15f)
+                                                },
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = student.role,
+                                                    color = when (student.role) {
+                                                        "Teacher" -> AppColors.Teacher
+                                                        "Staff" -> Color(0xFFE040FB)
+                                                        "Admin" -> AppColors.Admin
+                                                        else -> AppColors.Student
+                                                    },
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 10.sp,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+
+                                            val unreadCount = if (student.role == "Admin") {
+                                                adminChatMessages.count { it.senderId != teacherId && !it.isRead }
+                                            } else {
+                                                combinedAllTeacherChats.count { (it.studentId == student.id || it.teacherId == student.id) && it.senderId == student.id && !it.isRead }
+                                            }
                                             if (unreadCount > 0) {
                                                 Spacer(modifier = Modifier.width(8.dp))
                                                 Box(
@@ -2159,7 +3191,11 @@ fun TeacherMessagesScreen(navController: NavController) {
                                             
                                             Spacer(modifier = Modifier.weight(1f))
                                             
-                                            val latestMessage = allTeacherChats.filter { it.studentId == student.id }.maxByOrNull { it.timestamp }
+                                            val latestMessage = if (student.role == "Admin") {
+                                                adminChatMessages.maxByOrNull { it.timestamp }
+                                            } else {
+                                                combinedAllTeacherChats.filter { it.studentId == student.id || it.teacherId == student.id }.maxByOrNull { it.timestamp }
+                                            }
                                             if (latestMessage != null) {
                                                 Text(
                                                     text = java.text.SimpleDateFormat("dd MMM hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(latestMessage.timestamp)),
@@ -2170,12 +3206,24 @@ fun TeacherMessagesScreen(navController: NavController) {
                                         }
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            text = "College: ${student.college} | Course: ${student.course}",
+                                            text = if (student.role == "Student") {
+                                                "College: ${student.college} | Course: ${student.course}"
+                                            } else {
+                                                "${student.course} | ${student.college}"
+                                            },
                                             fontSize = 12.sp,
                                             color = AppColors.TextSecondary,
                                             maxLines = 1,
                                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                         )
+                                        if (student.role == "Student") {
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            AttendancePercentageBadge(
+                                                studentId = student.id,
+                                                backgroundColor = AppColors.Teacher.copy(alpha = 0.15f),
+                                                textColor = AppColors.Teacher
+                                            )
+                                        }
                                     }
                                     
                                     Icon(
@@ -2242,7 +3290,7 @@ fun TeacherMessagesScreen(navController: NavController) {
                                 ) {
                                     Column(
                                         horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-                                        modifier = Modifier.fillMaxWidth(0.82f)
+                                        modifier = Modifier.widthIn(max = 280.dp)
                                     ) {
                                         if (!isMe) {
                                             Text(
@@ -2748,5 +3796,360 @@ fun TeacherSendLocalAnnouncementScreen(navController: NavController) {
             
             Spacer(modifier = Modifier.height(32.dp))
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TeacherStudentRatingsDetailScreen(navController: NavController) {
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("TeacherPrefs", android.content.Context.MODE_PRIVATE)
+    val teacherId = prefs.getString("teacher_id", "") ?: ""
+    val firestore = FirebaseFirestore.getInstance()
+    var studentRatings by remember { mutableStateOf<List<com.rajeducational.erp.ui.admin.TeacherReview>>(emptyList()) }
+    val dateFormatter = remember { java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()) }
+
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotBlank()) {
+            firestore.collection("teacher_reviews")
+                .whereEqualTo("teacherId", teacherId)
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null) {
+                        studentRatings = snapshot.documents.mapNotNull { doc ->
+                            doc.toObject(com.rajeducational.erp.ui.admin.TeacherReview::class.java)?.copy(id = doc.id)
+                        }
+                    }
+                }
+        }
+    }
+
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("Student Ratings Detail") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Teacher, titleContentColor = Color.White, navigationIconContentColor = Color.White)) }
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            if (studentRatings.isEmpty()) {
+                Text("No ratings available.", fontSize = 14.sp, color = AppColors.TextSecondary)
+            } else {
+                studentRatings.forEachIndexed { index, review ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.White)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Student ${index + 1}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = AppColors.Navy)
+                                val dateStr = if (review.timestamp > 0) dateFormatter.format(java.util.Date(review.timestamp)) else "N/A"
+                                Text(dateStr, fontSize = 12.sp, color = AppColors.TextSecondary)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            review.ratings.forEach { (criterion, rating) ->
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(criterion, fontSize = 13.sp, color = AppColors.TextSecondary)
+                                    Text("$rating/5", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Navy)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TeacherManagementRatingsDetailScreen(navController: NavController) {
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("TeacherPrefs", android.content.Context.MODE_PRIVATE)
+    val teacherId = prefs.getString("teacher_id", "") ?: ""
+    val firestore = FirebaseFirestore.getInstance()
+    var managementReview by remember { mutableStateOf<com.rajeducational.erp.ui.admin.TeacherReview?>(null) }
+    val dateFormatter = remember { java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()) }
+
+    LaunchedEffect(teacherId) {
+        if (teacherId.isNotBlank()) {
+            firestore.collection("management_reviews")
+                .document(teacherId)
+                .addSnapshotListener { snapshot, _ ->
+                    if (snapshot != null && snapshot.exists()) {
+                        managementReview = snapshot.toObject(com.rajeducational.erp.ui.admin.TeacherReview::class.java)?.copy(id = snapshot.id)
+                    }
+                }
+        }
+    }
+
+    val managementScoreMap = managementReview?.ratings ?: emptyMap()
+
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("Management Ratings Detail") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Teacher, titleContentColor = Color.White, navigationIconContentColor = Color.White)) }
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            if (managementScoreMap.isEmpty()) {
+                Text("No management reviews yet.", fontSize = 14.sp, color = AppColors.TextSecondary)
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        val dateStr = if (managementReview != null && managementReview!!.timestamp > 0) {
+                            dateFormatter.format(java.util.Date(managementReview!!.timestamp))
+                        } else "N/A"
+                        
+                        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Submission Date:", fontSize = 13.sp, color = AppColors.TextSecondary)
+                            Text(dateStr, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Navy)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        managementScoreMap.forEach { (name, score) ->
+                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(name, fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.weight(1f))
+                                LinearProgressIndicator(progress = { score / 10f }, modifier = Modifier.weight(1f).height(8.dp).padding(horizontal = 8.dp), color = AppColors.Teacher, trackColor = Color(0xFFE0E0E0))
+                                Text("$score/10", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(40.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TeacherAllStudentsScreen(navController: NavController) {
+    var search by remember { mutableStateOf("") }
+    var allStudents by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
+    val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+
+    LaunchedEffect(Unit) {
+        firestore.collection("students")
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    allStudents = snapshot.documents.map { doc -> doc.data?.plus("docId" to doc.id) ?: emptyMap() }
+                }
+            }
+    }
+
+    val filteredStudents = allStudents.filter {
+        val name = it["fullName"] as? String ?: ""
+        val id = it["id"] as? String ?: ""
+        val course = it["course"] as? String ?: ""
+        name.contains(search, ignoreCase = true) || id.contains(search, ignoreCase = true) || course.contains(search, ignoreCase = true)
+    }
+
+    var selectedStudent by remember { mutableStateOf<Map<String, Any>?>(null) }
+    var showResetPassword by remember { mutableStateOf<Map<String, Any>?>(null) }
+    var todayAttendanceRecords by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    LaunchedEffect(selectedStudent) {
+        if (selectedStudent != null) {
+            val startCal = java.util.Calendar.getInstance()
+            startCal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            startCal.set(java.util.Calendar.MINUTE, 0)
+            val startTimestamp = startCal.timeInMillis
+            
+            val endCal = java.util.Calendar.getInstance()
+            endCal.set(java.util.Calendar.HOUR_OF_DAY, 23)
+            endCal.set(java.util.Calendar.MINUTE, 59)
+            val endTimestamp = endCal.timeInMillis
+
+            firestore.collection("attendance")
+                .whereEqualTo("studentId", selectedStudent!!["id"])
+                .whereGreaterThanOrEqualTo("timestamp", startTimestamp)
+                .whereLessThanOrEqualTo("timestamp", endTimestamp)
+                .get()
+                .addOnSuccessListener { snapshot ->
+                    todayAttendanceRecords = snapshot.documents.mapNotNull { it.data }
+                }
+        } else {
+            todayAttendanceRecords = emptyList()
+        }
+    }
+
+    Scaffold(
+        topBar = { 
+            TopAppBar(
+                title = { Text("All Students") }, 
+                navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, 
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Teacher, titleContentColor = Color.White, navigationIconContentColor = Color.White)
+            ) 
+        }
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background)) {
+            OutlinedTextField(
+                value = search, 
+                onValueChange = { search = it }, 
+                label = { Text("Search by name, ID, course...") }, 
+                leadingIcon = { Icon(Icons.Default.Search, "Search") }, 
+                modifier = Modifier.fillMaxWidth().padding(16.dp), 
+                shape = RoundedCornerShape(10.dp)
+            )
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                items(filteredStudents.size) { index ->
+                    val student = filteredStudents[index]
+                    val name = student["fullName"] as? String ?: "Unknown"
+                    val id = student["id"] as? String ?: ""
+                    val profileUrl = student["profileUrl"] as? String
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable { selectedStudent = student }, 
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (profileUrl.isNullOrEmpty()) {
+                                Box(modifier = Modifier.size(40.dp).clip(CircleShape).background(AppColors.Teacher), contentAlignment = Alignment.Center) { Text(name.firstOrNull()?.toString() ?: "?", color = Color.White, fontWeight = FontWeight.Bold) }
+                            } else {
+                                com.rajeducational.erp.ui.components.ProfileImage(
+                                    urlOrBase64 = profileUrl,
+                                    modifier = Modifier.size(40.dp).clip(CircleShape),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) { 
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(name, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f, fill = false))
+                                    val isAttending = student["isAttending"] as? Boolean ?: true
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Surface(
+                                        color = if (isAttending) AppColors.Student.copy(alpha = 0.1f) else Color.Red.copy(alpha = 0.1f),
+                                        contentColor = if (isAttending) AppColors.Student else Color.Red,
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isAttending) "Attending" else "Non-attending",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(id, fontSize = 12.sp, color = AppColors.TextSecondary)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    AttendancePercentageBadge(
+                                        studentId = id,
+                                        backgroundColor = AppColors.Teacher.copy(alpha = 0.15f),
+                                        textColor = AppColors.Teacher
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (selectedStudent != null) {
+        val student = selectedStudent!!
+        AlertDialog(
+            onDismissRequest = { selectedStudent = null },
+            title = { Text("Student Details") },
+            text = {
+                Column {
+                    Text("Name: ${student["fullName"] ?: ""}", fontWeight = FontWeight.Bold)
+                    Text("ID: ${student["id"] ?: ""}")
+                    Text("Email: ${student["email"] ?: ""}")
+                    Text("Course: ${student["course"] ?: ""}")
+                    Text("Session: ${student["session"] ?: ""}")
+                    Text("Batch: ${student["batch"] ?: ""}")
+                    Text("Year: ${student["year"] ?: ""}")
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    AttendanceStatsCard(
+                        studentId = student["id"] as? String ?: "",
+                        cardColor = AppColors.Teacher.copy(alpha = 0.05f)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Today's Attendance Status", fontWeight = FontWeight.Bold, color = AppColors.Teacher)
+                    if (todayAttendanceRecords.isEmpty()) {
+                        Text("No attendance recorded today.", fontSize = 14.sp)
+                    } else {
+                        val timeFormat = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault())
+                        todayAttendanceRecords.sortedBy { it["timestamp"] as? Long ?: 0L }.forEach { record ->
+                            val type = record["type"] as? String ?: ""
+                            val status = record["status"] as? String ?: ""
+                            val ts = record["timestamp"] as? Long ?: 0L
+                            val timeStr = if (ts > 0) timeFormat.format(java.util.Date(ts)) else "--"
+                            Text("• $type ($timeStr) - $status", fontSize = 14.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { selectedStudent = null }) {
+                    Text("Close")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetPassword = student; selectedStudent = null }) {
+                    Text("Reset Password", color = AppColors.Teacher)
+                }
+            }
+        )
+    }
+
+    if (showResetPassword != null) {
+        val student = showResetPassword!!
+        val docId = student["docId"] as? String
+        var newPassword by remember { mutableStateOf("") }
+        var isSaving by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showResetPassword = null },
+            title = { Text("Reset Password") },
+            text = {
+                Column {
+                    Text("Student: ${student["fullName"]}")
+                    Text("Current Password: ${student["password"] ?: "Not Set"}")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = newPassword,
+                        onValueChange = { newPassword = it },
+                        label = { Text("New Password") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (newPassword.isNotBlank() && docId != null) {
+                            isSaving = true
+                            firestore.collection("students").document(docId)
+                                .update("password", newPassword)
+                                .addOnSuccessListener {
+                                    isSaving = false
+                                    android.widget.Toast.makeText(context, "Password reset successfully", android.widget.Toast.LENGTH_SHORT).show()
+                                    showResetPassword = null
+                                }
+                        }
+                    },
+                    enabled = !isSaving
+                ) {
+                    Text(if (isSaving) "Saving..." else "Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetPassword = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }

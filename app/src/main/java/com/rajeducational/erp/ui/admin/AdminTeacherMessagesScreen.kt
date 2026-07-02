@@ -40,7 +40,8 @@ data class AdminTeacherContact(
     val name: String,
     val college: String,
     val course: String,
-    val session: String
+    val session: String,
+    val role: String = "Teacher"
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,9 +54,12 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
     var selectedTeacher by remember { mutableStateOf<AdminTeacherContact?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     
-    var teacherList by remember { mutableStateOf<List<AdminTeacherContact>>(emptyList()) }
+    var teachersList by remember { mutableStateOf<List<AdminTeacherContact>>(emptyList()) }
+    var staffsList by remember { mutableStateOf<List<AdminTeacherContact>>(emptyList()) }
     var isListLoading by remember { mutableStateOf(true) }
     var allAdminTeacherChats by remember { mutableStateOf<List<AdminChatMessage>>(emptyList()) }
+    
+    val teacherList = remember(teachersList, staffsList) { teachersList + staffsList }
     
     var chatMessages by remember { mutableStateOf<List<AdminChatMessage>>(emptyList()) }
     var messageText by remember { mutableStateOf("") }
@@ -67,17 +71,33 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
         firestore.collection("teachers")
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
-                    teacherList = snapshot.documents.map { doc ->
+                    teachersList = snapshot.documents.map { doc ->
                         AdminTeacherContact(
                             id = doc.id,
                             name = doc.getString("name") ?: doc.getString("fullName") ?: "Unknown Teacher",
                             college = doc.getString("collegeName") ?: doc.getString("college") ?: "N/A",
-                            course = (doc.get("courses") as? List<*>)?.joinToString(", ") ?: doc.getString("course") ?: doc.getString("department") ?: "N/A",
-                            session = (doc.get("years") as? List<*>)?.joinToString(", ") ?: doc.getString("designation") ?: "N/A"
+                            course = (doc.get("courses") as? List<*>)?.joinToString(", ") ?: doc.getString("course") ?: doc.getString("departmentName") ?: doc.getString("department") ?: "N/A",
+                            session = (doc.get("years") as? List<*>)?.joinToString(", ") ?: doc.getString("designation") ?: "N/A",
+                            role = "Teacher"
                         )
                     }
                 }
                 isListLoading = false
+            }
+        firestore.collection("staffs")
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    staffsList = snapshot.documents.map { doc ->
+                        AdminTeacherContact(
+                            id = doc.id,
+                            name = doc.getString("name") ?: doc.getString("fullName") ?: "Unknown Staff",
+                            college = doc.getString("collegeName") ?: doc.getString("college") ?: "N/A",
+                            course = doc.getString("departmentName") ?: (doc.get("courses") as? List<*>)?.joinToString(", ") ?: doc.getString("course") ?: doc.getString("department") ?: "N/A",
+                            session = (doc.get("years") as? List<*>)?.joinToString(", ") ?: doc.getString("designation") ?: "N/A",
+                            role = "Staff"
+                        )
+                    }
+                }
             }
     }
 
@@ -216,14 +236,14 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
                 title = {
                     Column {
                         Text(
-                            text = selectedTeacher?.name ?: "Teacher Messages Control",
+                            text = selectedTeacher?.name ?: "Teacher and Staff Messages",
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp,
                             color = Color.White
                         )
                         if (selectedTeacher != null) {
                             Text(
-                                text = "Dept: ${selectedTeacher!!.course} | ${selectedTeacher!!.session}",
+                                text = "Role: ${selectedTeacher!!.role} | Dept: ${selectedTeacher!!.course}",
                                 fontSize = 12.sp,
                                 color = Color.White.copy(alpha = 0.8f)
                             )
@@ -263,7 +283,7 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search by Teacher, College or Dept...", color = AppColors.TextSecondary) },
+                    placeholder = { Text("Search by Teacher/Staff, College or Dept...", color = AppColors.TextSecondary) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
@@ -291,7 +311,7 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
                     }
                 } else if (filteredTeachers.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No teachers found.", color = AppColors.TextSecondary)
+                        Text("No records found.", color = AppColors.TextSecondary)
                     }
                 } else {
                     LazyColumn(
@@ -301,6 +321,7 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
                     ) {
                         items(filteredTeachers.size) { index ->
                             val teacher = filteredTeachers[index]
+                            val isStaff = teacher.role == "Staff"
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -318,13 +339,16 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
                                     Box(
                                         modifier = Modifier
                                             .size(44.dp)
-                                            .background(AppColors.Admin.copy(alpha = 0.15f), CircleShape),
+                                            .background(
+                                                color = if (isStaff) AppColors.Staff.copy(alpha = 0.15f) else AppColors.Admin.copy(alpha = 0.15f),
+                                                shape = CircleShape
+                                            ),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Person,
                                             contentDescription = null,
-                                            tint = AppColors.Admin
+                                            tint = if (isStaff) AppColors.Staff else AppColors.Admin
                                         )
                                     }
                                     
@@ -338,6 +362,20 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
                                                 fontSize = 15.sp,
                                                 color = AppColors.Navy
                                             )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                color = if (isStaff) AppColors.Staff.copy(alpha = 0.1f) else AppColors.Admin.copy(alpha = 0.1f),
+                                                contentColor = if (isStaff) AppColors.Staff else AppColors.Admin,
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = teacher.role,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                )
+                                            }
+                                            
                                             val unreadCount = allAdminTeacherChats.count { it.studentId == teacher.id && it.senderId == teacher.id && !it.isRead }
                                             if (unreadCount > 0) {
                                                 Spacer(modifier = Modifier.width(8.dp))
@@ -432,7 +470,7 @@ fun AdminTeacherMessagesScreen(navController: NavController) {
                                 ) {
                                     Column(
                                         horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-                                        modifier = Modifier.fillMaxWidth(0.82f)
+                                        modifier = Modifier.widthIn(max = 280.dp)
                                     ) {
                                         if (!isMe) {
                                             Text(

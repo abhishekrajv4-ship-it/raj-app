@@ -48,6 +48,9 @@ fun TeacherAuthScreen(navController: NavController) {
     var authError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
+        if (!cameraPermissionState.status.isGranted) {
+            cameraPermissionState.launchPermissionRequest()
+        }
         val prefs = context.getSharedPreferences("TeacherPrefs", android.content.Context.MODE_PRIVATE)
         if (prefs.getBoolean("is_logged_in", false)) {
             navController.navigate("teacher_announcements") {

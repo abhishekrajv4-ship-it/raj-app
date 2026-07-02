@@ -248,17 +248,11 @@ fun FeeStructureCourseCard(college: College, course: com.rajeducational.erp.data
                             .fillMaxWidth()
                             .padding(vertical = 4.dp)
                             .clickable {
-                                try {
-                                    var url = feeFile.viewUrl
-                                    if (!url.startsWith("http")) {
-                                        url = "https://rajapp.matavaishnavieducationaltrust.org/$url"
-                                    }
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-                                    intent.data = android.net.Uri.parse(url)
-                                    context.startActivity(intent)
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "No app found to open this file", Toast.LENGTH_SHORT).show()
+                                var url = feeFile.viewUrl
+                                if (!url.startsWith("http")) {
+                                    url = "https://rajapp.matavaishnavieducationaltrust.org/$url"
                                 }
+                                com.rajeducational.erp.ui.common.PdfOpener.openPdf(context, url, coroutineScope)
                             }
                     ) {
                         Icon(Icons.Default.Description, contentDescription = null, tint = AppColors.Admin)

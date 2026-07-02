@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,9 +22,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import androidx.compose.ui.platform.LocalContext
 import com.google.firebase.firestore.FirebaseFirestore
 import com.rajeducational.erp.theme.AppColors
 import com.rajeducational.erp.ui.student.TeacherData
+import coil.compose.AsyncImage
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.ContentScale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,18 +145,50 @@ fun AdminManagementReviewControlScreen(navController: NavController) {
     var teachersList by remember { mutableStateOf<List<TeacherData>>(emptyList()) }
     var reviewCriteriaList by remember { mutableStateOf<List<ReviewCriteria>>(emptyList()) }
     val firestore = FirebaseFirestore.getInstance()
+    var reviewsMap by remember { mutableStateOf<Map<String, TeacherReview?>>(emptyMap()) }
 
     var selectedTeacher by remember { mutableStateOf<TeacherData?>(null) }
     var showReviewDialog by remember { mutableStateOf(false) }
+    
+    var showResetConfirm by remember { mutableStateOf(false) }
+    var isResetting by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         firestore.collection("teachers").get().addOnSuccessListener { snapshot ->
-            teachersList = snapshot.documents.mapNotNull { doc ->
+            val teachers = snapshot.documents.mapNotNull { doc ->
                 val name = doc.getString("name") ?: ""
                 val collegeName = doc.getString("collegeName") ?: ""
                 val course = doc.getString("course") ?: ""
                 val years = doc.get("years") as? List<String> ?: emptyList()
-                TeacherData(id = doc.id, name = name, collegeName = collegeName, course = course, years = years)
+                val profileUrl = doc.getString("profileUrl") ?: ""
+                TeacherData(id = doc.id, name = name, collegeName = collegeName, course = course, years = years, isTeacher = true, profileUrl = profileUrl)
+            }
+            firestore.collection("staffs").get().addOnSuccessListener { staffSnapshot ->
+                val staff = staffSnapshot.documents.mapNotNull { doc ->
+                    val name = doc.getString("name") ?: ""
+                    val collegeName = doc.getString("collegeName") ?: ""
+                    val course = doc.getString("course") ?: ""
+                    val years = doc.get("years") as? List<String> ?: emptyList()
+                    val profileUrl = doc.getString("profileUrl") ?: ""
+                    TeacherData(id = doc.id, name = name, collegeName = collegeName, course = course, years = years, isTeacher = false, profileUrl = profileUrl)
+                }
+                
+                firestore.collection("management_reviews").get().addOnSuccessListener { reviewSnapshot ->
+                    val reviews = reviewSnapshot.documents.associate { doc ->
+                        doc.id to doc.toObject(TeacherReview::class.java)
+                    }
+                    reviewsMap = reviews
+                    teachersList = (teachers + staff).map { t ->
+                        val review = reviewsMap[t.id]
+                        if (review != null && review.ratings.isNotEmpty()) {
+                             val avg = review.ratings.values.average()
+                             t.copy(rating = avg * 10) 
+                        } else {
+                            t
+                        }
+                    }
+                }
             }
         }
         firestore.collection("management_review_criteria").get().addOnSuccessListener { snapshot ->
@@ -158,6 +196,40 @@ fun AdminManagementReviewControlScreen(navController: NavController) {
                 doc.toObject(ReviewCriteria::class.java)?.copy(id = doc.id)
             }
         }
+    }
+    
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text("Reset All Management Reviews?") },
+            text = { Text("Are you sure you want to delete all management reviews? This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isResetting = true
+                        firestore.collection("management_reviews").get()
+                            .addOnSuccessListener { snapshot ->
+                                val batch = firestore.batch()
+                                for (doc in snapshot.documents) {
+                                    batch.delete(doc.reference)
+                                }
+                                batch.commit()
+                                    .addOnSuccessListener {
+                                        android.widget.Toast.makeText(context, "Management reviews reset successfully", android.widget.Toast.LENGTH_SHORT).show()
+                                        isResetting = false
+                                        showResetConfirm = false
+                                        reviewsMap = emptyMap()
+                                        teachersList = teachersList.map { it.copy(rating = 0.0) }
+                                    }
+                            }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) { Text(if (isResetting) "Resetting..." else "Reset") }
+            },
+            dismissButton = {
+                Button(onClick = { showResetConfirm = false }) { Text("Cancel") }
+            }
+        )
     }
 
     val filteredTeachers = teachersList.filter {
@@ -174,8 +246,11 @@ fun AdminManagementReviewControlScreen(navController: NavController) {
                     IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 },
                 actions = {
+                    IconButton(onClick = { showResetConfirm = true }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Reset Reviews", tint = Color.White)
+                    }
                     TextButton(onClick = { navController.navigate("admin_management_review_criteria_control") }) {
-                        Text("Manage Review Criteria", color = Color.White)
+                        Text("Manage Criteria", color = Color.White)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Admin, titleContentColor = Color.White, actionIconContentColor = Color.White)
@@ -191,7 +266,7 @@ fun AdminManagementReviewControlScreen(navController: NavController) {
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                label = { Text("Search teachers...") },
+                label = { Text("Search teachers/staff...") },
                 leadingIcon = { Icon(Icons.Default.Search, "Search") },
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 shape = RoundedCornerShape(12.dp),
@@ -204,21 +279,49 @@ fun AdminManagementReviewControlScreen(navController: NavController) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(filteredTeachers) { teacher ->
+                    val isLocked = reviewsMap[teacher.id] != null
                     Card(
-                        modifier = Modifier.fillMaxWidth().clickable {
+                        modifier = Modifier.fillMaxWidth().clickable(enabled = !isLocked) {
                             selectedTeacher = teacher
                             showReviewDialog = true
                         },
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White)
+                        colors = CardDefaults.cardColors(containerColor = if (isLocked) Color.LightGray else Color.White)
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(teacher.name, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text("${teacher.course} | ${teacher.collegeName}", fontSize = 14.sp, color = AppColors.TextSecondary)
-                            if (teacher.years.isNotEmpty()) {
+                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (teacher.profileUrl.isNotEmpty()) {
+                                coil.compose.AsyncImage(
+                                    model = teacher.profileUrl,
+                                    contentDescription = "Profile Picture",
+                                    modifier = Modifier.size(50.dp).clip(androidx.compose.foundation.shape.CircleShape),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                            } else {
+                                Box(modifier = Modifier.size(50.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color.Gray), contentAlignment = Alignment.Center) {
+                                    Text(teacher.name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                                }
+                                Spacer(modifier = Modifier.width(16.dp))
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                    Text(teacher.name, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy)
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(if (teacher.isTeacher) "Teacher" else "Staff", fontSize = 12.sp, color = if (teacher.isTeacher) Color.Blue else Color.Green)
+                                        Text("${"%.1f".format(teacher.rating)}%", fontSize = 12.sp, color = AppColors.Admin, fontWeight = FontWeight.Bold)
+                                        if (isLocked) {
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Icon(androidx.compose.material.icons.Icons.Default.Lock, contentDescription = "Locked", tint = Color.DarkGray, modifier = Modifier.size(14.dp))
+                                        }
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("Batches: ${teacher.years.joinToString(", ")}", fontSize = 12.sp, color = AppColors.TextSecondary)
+                                Text("${teacher.course} | ${teacher.collegeName}", fontSize = 14.sp, color = AppColors.TextSecondary)
+                                if (teacher.years.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text("Batches: ${teacher.years.joinToString(", ")}", fontSize = 12.sp, color = AppColors.TextSecondary)
+                                }
                             }
                         }
                     }
@@ -230,6 +333,7 @@ fun AdminManagementReviewControlScreen(navController: NavController) {
     if (showReviewDialog && selectedTeacher != null) {
         ManagementReviewDialog(
             teacher = selectedTeacher!!,
+            existingReview = reviewsMap[selectedTeacher!!.id],
             criteriaList = reviewCriteriaList,
             onDismiss = { showReviewDialog = false },
             onSubmit = { ratings ->
@@ -244,6 +348,20 @@ fun AdminManagementReviewControlScreen(navController: NavController) {
                 // Overwrite the management review for this teacher (or just store it by teacherId)
                 firestore.collection("management_reviews").document(selectedTeacher!!.id).set(review)
                     .addOnSuccessListener {
+                        // Update local state to reflect review submission
+                        val updatedReviewsMap = reviewsMap.toMutableMap()
+                        updatedReviewsMap[selectedTeacher!!.id] = review
+                        reviewsMap = updatedReviewsMap
+                        
+                        teachersList = teachersList.map { t ->
+                            if (t.id == selectedTeacher!!.id) {
+                                 val avg = review.ratings.values.average()
+                                 t.copy(rating = avg * 10) 
+                            } else {
+                                t
+                            }
+                        }
+                        
                         showReviewDialog = false
                         android.widget.Toast.makeText(navController.context, "Review submitted successfully", android.widget.Toast.LENGTH_SHORT).show()
                     }
@@ -255,17 +373,18 @@ fun AdminManagementReviewControlScreen(navController: NavController) {
 @Composable
 fun ManagementReviewDialog(
     teacher: TeacherData,
+    existingReview: TeacherReview?,
     criteriaList: List<ReviewCriteria>,
     onDismiss: () -> Unit,
     onSubmit: (Map<String, Int>) -> Unit
 ) {
-    var ratings by remember { mutableStateOf(criteriaList.associate { it.title to 0 }) }
+    var ratings by remember { mutableStateOf(existingReview?.ratings ?: criteriaList.associate { it.title to 0 }) }
     var isSubmitting by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Review ${teacher.name}", fontWeight = FontWeight.Bold)
+            Text(if (existingReview != null) "Review for ${teacher.name} (Already Reviewed)" else "Review ${teacher.name}", fontWeight = FontWeight.Bold)
         },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
@@ -281,12 +400,15 @@ fun ManagementReviewDialog(
                             Slider(
                                 value = currentRating.toFloat(),
                                 onValueChange = { newValue ->
-                                    ratings = ratings.toMutableMap().apply {
-                                        this[criteria.title] = newValue.toInt()
+                                    if (existingReview == null) {
+                                        ratings = ratings.toMutableMap().apply {
+                                            this[criteria.title] = newValue.toInt()
+                                        }
                                     }
                                 },
                                 valueRange = 0f..10f,
-                                steps = 9
+                                steps = 9,
+                                enabled = existingReview == null
                             )
                             Text("Score: $currentRating / 10", fontSize = 12.sp, color = AppColors.TextSecondary)
                         }
@@ -295,20 +417,22 @@ fun ManagementReviewDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    isSubmitting = true
-                    onSubmit(ratings)
-                },
-                enabled = !isSubmitting && criteriaList.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin)
-            ) {
-                Text(if (isSubmitting) "Submitting..." else "Submit Review")
+            if (existingReview == null) {
+                Button(
+                    onClick = {
+                        isSubmitting = true
+                        onSubmit(ratings)
+                    },
+                    enabled = !isSubmitting && criteriaList.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin)
+                ) {
+                    Text(if (isSubmitting) "Submitting..." else "Submit Review")
+                }
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = AppColors.TextSecondary)
+                Text(if (existingReview != null) "Close" else "Cancel", color = AppColors.TextSecondary)
             }
         }
     )

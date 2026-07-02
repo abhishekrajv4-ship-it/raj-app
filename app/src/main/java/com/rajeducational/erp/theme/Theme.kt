@@ -10,6 +10,7 @@ object AppColors {
     val Guest = Color(0xFFBA7517)
     val Admin = Color(0xFFD85A30)
     val Director = Color(0xFF8B5CF6)
+    val Staff = Color(0xFF9C27B0)
     val Navy = Color(0xFF1A3A5C)
     val Background = Color(0xFFF0F2F5)
     val CardBg = Color.White

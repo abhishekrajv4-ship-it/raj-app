@@ -38,18 +38,24 @@ fun AdminAddAdminScreen(navController: NavController) {
         "admin_event_control_center" to "Event Control Center",
         "admin_guest_messages_control" to "Guest Messages",
         "admin_announcement_control" to "Common Announcement Control Center",
+        "admin_view_students" to "View Students",
         "admin_council_voting_control" to "Council Voting Control",
         "admin_student_messages_control" to "Student Messages",
         "admin_fee_reminder_control" to "Fees Control Panel",
-        "admin_teacher_qr_control" to "Teacher Registration by QR Code",
-        "admin_registered_teachers" to "Registered Teachers",
-        "admin_teacher_messages" to "Teachers Messages",
+        "admin_teacher_qr_control" to "Teacher and Staff Registration by QR Code",
+        "admin_registered_teachers" to "Registered Teachers and Staff",
+        "admin_teacher_messages" to "Teacher and Staff Messages",
+        "admin_teacher_staff_attendance_control" to "Teacher and Staff Attendance Control",
+        "admin_daily_teaching_plan_control" to "Teacher Daily Teaching Plan",
         "admin_statistics_control" to "Dashboard Edit Control Panel",
         "admin_developer_options" to "Developer Options",
+        "admin_give_holiday" to "Give a Holiday",
         "admin_teacher_review_criteria_control" to "Teacher Review Criteria Control",
         "admin_teacher_reviews" to "Teacher Reviews Monitor",
         "admin_management_review_criteria_control" to "Management Review Criteria Control",
-        "admin_management_review_control" to "Management Reviews Monitor"
+        "admin_management_review_control" to "Management Reviews Monitor",
+        "admin_add_admin" to "Add Admin / Monitor Admins",
+        "admin_generate_reports" to "Generate Reports Control"
     )
     
     val selectedFeatures = remember { mutableStateListOf<String>() }
@@ -80,6 +86,15 @@ fun AdminAddAdminScreen(navController: NavController) {
                 .verticalScroll(rememberScrollState())
         ) {
             if (step == 1) {
+                Button(
+                    onClick = { navController.navigate("admin_monitor_admin") },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin)
+                ) {
+                    Icon(Icons.Default.People, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Monitor Admins")
+                }
                 Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("Admin Details", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy)
@@ -181,18 +196,24 @@ fun AdminMonitorAdminsScreen(navController: NavController) {
         "admin_event_control_center" to "Event Control Center",
         "admin_guest_messages_control" to "Guest Messages",
         "admin_announcement_control" to "Common Announcement Control Center",
+        "admin_view_students" to "View Students",
         "admin_council_voting_control" to "Council Voting Control",
         "admin_student_messages_control" to "Student Messages",
         "admin_fee_reminder_control" to "Fees Control Panel",
-        "admin_teacher_qr_control" to "Teacher Registration by QR Code",
-        "admin_registered_teachers" to "Registered Teachers",
-        "admin_teacher_messages" to "Teachers Messages",
+        "admin_teacher_qr_control" to "Teacher and Staff Registration by QR Code",
+        "admin_registered_teachers" to "Registered Teachers and Staff",
+        "admin_teacher_messages" to "Teacher and Staff Messages",
+        "admin_teacher_staff_attendance_control" to "Teacher and Staff Attendance Control",
+        "admin_daily_teaching_plan_control" to "Teacher Daily Teaching Plan",
         "admin_statistics_control" to "Dashboard Edit Control Panel",
         "admin_developer_options" to "Developer Options",
+        "admin_give_holiday" to "Give a Holiday",
         "admin_teacher_review_criteria_control" to "Teacher Review Criteria Control",
         "admin_teacher_reviews" to "Teacher Reviews Monitor",
         "admin_management_review_criteria_control" to "Management Review Criteria Control",
-        "admin_management_review_control" to "Management Reviews Monitor"
+        "admin_management_review_control" to "Management Reviews Monitor",
+        "admin_add_admin" to "Add Admin / Monitor Admins",
+        "admin_generate_reports" to "Generate Reports Control"
     )
 
     LaunchedEffect(Unit) {

@@ -25,10 +25,15 @@ data class AdminMenuItem(val key: String, val label: String, val icon: ImageVect
 @Composable
 fun AdminPanelScreen(navController: NavController) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = context.getSharedPreferences("AdminPrefs", android.content.Context.MODE_PRIVATE)
+    
     var activeSection by remember { mutableStateOf("dashboard") }
     var hasUnreadAdminMessages by remember { mutableStateOf(false) }
-    var isAdminType by remember { mutableStateOf("") }
-    var adminPermissions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var isAdminType by remember { mutableStateOf(prefs.getString("saved_admin_type", "") ?: "") }
+    var adminPermissions by remember { 
+        val savedPerms = prefs.getStringSet("saved_admin_perms", emptySet()) ?: emptySet()
+        mutableStateOf<List<String>>(savedPerms.toList()) 
+    }
     var otherAdmins by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
     var showAdminPasswordDialog by remember { mutableStateOf<Map<String, Any>?>(null) }
     var adminPasswordInput by remember { mutableStateOf("") }
@@ -40,22 +45,62 @@ fun AdminPanelScreen(navController: NavController) {
         "admin_event_control_center" to "Event Control Center",
         "admin_guest_messages_control" to "Guest Messages",
         "admin_announcement_control" to "Common Announcement Control Center",
+        "admin_view_students" to "View Students",
         "admin_council_voting_control" to "Council Voting Control",
         "admin_student_messages_control" to "Student Messages",
         "admin_fee_reminder_control" to "Fees Control Panel",
-        "admin_teacher_qr_control" to "Teacher Registration by QR Code",
-        "admin_registered_teachers" to "Registered Teachers",
-        "admin_teacher_messages" to "Teachers Messages",
+        "admin_teacher_qr_control" to "Teacher and Staff Registration by QR Code",
+        "admin_registered_teachers" to "Registered Teachers and Staff",
+        "admin_teacher_messages" to "Teacher and Staff Messages",
+        "admin_teacher_staff_attendance_control" to "Teacher and Staff Attendance Control",
+        "admin_daily_teaching_plan_control" to "Teacher Daily Teaching Plan",
         "admin_statistics_control" to "Dashboard Edit Control Panel",
         "admin_developer_options" to "Developer Options",
+        "admin_give_holiday" to "Give a Holiday",
         "admin_teacher_review_criteria_control" to "Teacher Review Criteria Control",
         "admin_teacher_reviews" to "Teacher Reviews Monitor",
         "admin_management_review_criteria_control" to "Management Review Criteria Control",
-        "admin_management_review_control" to "Management Reviews Monitor"
+        "admin_management_review_control" to "Management Reviews Monitor",
+        "admin_add_admin" to "Add Admin / Monitor Admins",
+        "admin_generate_reports" to "Generate Reports Control"
     )
     
+    var studentsCount by remember { mutableStateOf("0") }
+    var teachersCount by remember { mutableStateOf("0") }
+    var collegesCount by remember { mutableStateOf("0") }
+    var averageAttendance by remember { mutableStateOf("0%") }
+
     LaunchedEffect(Unit) {
-        FirebaseFirestore.getInstance().collection("guest_messages")
+        val firestore = FirebaseFirestore.getInstance()
+        firestore.collection("students").addSnapshotListener { snapshot, _ ->
+            if (snapshot != null) studentsCount = snapshot.documents.size.toString()
+        }
+        firestore.collection("teachers").addSnapshotListener { snapshot, _ ->
+            if (snapshot != null) teachersCount = snapshot.documents.size.toString()
+        }
+        firestore.collection("colleges").addSnapshotListener { snapshot, _ ->
+            if (snapshot != null) collegesCount = snapshot.documents.size.toString()
+        }
+        
+        firestore.collection("attendance").addSnapshotListener { attSnapshot, _ ->
+            if (attSnapshot != null) {
+                firestore.collection("students").get().addOnSuccessListener { studSnapshot ->
+                    val totalStudents = studSnapshot.documents.size.coerceAtLeast(1)
+                    val allTimestamps = attSnapshot.documents.mapNotNull { it.getLong("timestamp") }
+                    val distinctDays = allTimestamps.map { ts ->
+                        val cal = java.util.Calendar.getInstance()
+                        cal.timeInMillis = ts
+                        "${cal.get(java.util.Calendar.YEAR)}-${cal.get(java.util.Calendar.MONTH)}-${cal.get(java.util.Calendar.DAY_OF_MONTH)}"
+                    }.toSet().size.coerceAtLeast(1)
+                    val totalAttendanceRecords = attSnapshot.documents.size
+                    
+                    val avg = ((totalAttendanceRecords.toFloat() / (totalStudents.toFloat() * distinctDays.toFloat())) * 100).toInt().coerceAtMost(100)
+                    averageAttendance = "$avg%"
+                }
+            }
+        }
+        
+        firestore.collection("guest_messages")
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     hasUnreadAdminMessages = snapshot.documents.any { doc ->
@@ -66,7 +111,7 @@ fun AdminPanelScreen(navController: NavController) {
                 }
             }
             
-        FirebaseFirestore.getInstance().collection("admins")
+        firestore.collection("admins")
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
                     otherAdmins = snapshot.documents.map { it.data?.plus("id" to it.id) ?: mapOf() }
@@ -85,11 +130,11 @@ fun AdminPanelScreen(navController: NavController) {
     val superAdminMenuItems = listOf(
         AdminMenuItem("guestportalcontrol", "Guest Portal Control", Icons.Default.ManageAccounts),
         AdminMenuItem("studentportalcontrol", "Student Portal Control", Icons.Default.School),
-        AdminMenuItem("teacherportalcontrol", "Teacher Portal Control", Icons.Default.PersonSearch),
+        AdminMenuItem("teacherportalcontrol", "Teacher and Staff Portal Control", Icons.Default.PersonSearch),
         AdminMenuItem("settings", "Settings", Icons.Default.Settings),
         AdminMenuItem("reviewcontrolcenter", "Review Control Center", Icons.Default.Star),
         AdminMenuItem("admin_add_admin", "Add Admin", Icons.Default.PersonAdd),
-        AdminMenuItem("admin_monitor_admin", "Monitor Admin Menu", Icons.Default.People)
+        AdminMenuItem("admin_generate_reports", "Generate", Icons.Default.Assessment)
     )
 
     // Admin Panel
@@ -111,6 +156,7 @@ fun AdminPanelScreen(navController: NavController) {
                 if (isAdminType.isNotEmpty()) {
                     isAdminType = ""
                     activeSection = "dashboard"
+                    prefs.edit().remove("saved_admin_type").remove("saved_admin_perms").apply()
                 } else {
                     navController.popBackStack() 
                 }
@@ -122,12 +168,37 @@ fun AdminPanelScreen(navController: NavController) {
             if (activeSection == "dashboard") {
                 if (isAdminType == "") {
                     // Dashboard Stats
-                    Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        listOf("3" to "Students", "1" to "Teachers", "7" to "Colleges").forEach { (num, label) ->
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Card(modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
                                 Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(num, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
-                                    Text(label, fontSize = 11.sp, color = AppColors.TextSecondary)
+                                    Text(studentsCount, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
+                                    Text("Students", fontSize = 11.sp, color = AppColors.TextSecondary)
+                                }
+                            }
+                            Card(modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(teachersCount, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
+                                    Text("Teachers", fontSize = 11.sp, color = AppColors.TextSecondary)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Card(modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
+                                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(collegesCount, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
+                                    Text("Colleges", fontSize = 11.sp, color = AppColors.TextSecondary)
+                                }
+                            }
+                            Card(
+                                modifier = Modifier.weight(1f), 
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = AppColors.Admin.copy(alpha = 0.1f))
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(averageAttendance, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = AppColors.Admin)
+                                    Text("Avg Attendance", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
                                 }
                             }
                         }
@@ -138,7 +209,7 @@ fun AdminPanelScreen(navController: NavController) {
                     // Super Admin
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clickable { 
-                            showAdminPasswordDialog = mapOf("username" to "Super Admin", "password" to "2311", "type" to "superadmin")
+                            showAdminPasswordDialog = mapOf("username" to "Super Admin", "password" to (prefs.getString("admin_password", "2311") ?: "2311"), "type" to "superadmin")
                             adminPasswordInput = ""
                         },
                         shape = RoundedCornerShape(12.dp)
@@ -301,6 +372,15 @@ fun AdminPanelScreen(navController: NavController) {
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
+                                onClick = { navController.navigate("admin_view_students") },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("View Students", modifier = Modifier.padding(8.dp))
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
                                 onClick = { navController.navigate("admin_council_voting_control") },
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
@@ -331,7 +411,7 @@ fun AdminPanelScreen(navController: NavController) {
                 } else if (activeSection == "teacherportalcontrol") {
                     Card(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp)) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text("Teacher Portal Control", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy)
+                            Text("Teacher and Staff Portal Control", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.Navy)
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = { navController.navigate("admin_teacher_qr_control") },
@@ -339,7 +419,7 @@ fun AdminPanelScreen(navController: NavController) {
                                 colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Teacher Registration by QR Code", modifier = Modifier.padding(8.dp))
+                                Text("Teacher and Staff Registration by QR Code", modifier = Modifier.padding(8.dp))
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
@@ -348,7 +428,7 @@ fun AdminPanelScreen(navController: NavController) {
                                 colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Registered Teachers", modifier = Modifier.padding(8.dp))
+                                Text("Registered Teachers and Staff", modifier = Modifier.padding(8.dp))
                             }
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
@@ -357,7 +437,25 @@ fun AdminPanelScreen(navController: NavController) {
                                 colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Teachers Messages", modifier = Modifier.padding(8.dp))
+                                Text("Teacher and Staff Messages", modifier = Modifier.padding(8.dp))
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { navController.navigate("admin_teacher_staff_attendance_control") },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Teacher and Staff Attendance", modifier = Modifier.padding(8.dp))
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { navController.navigate("admin_daily_teaching_plan_control") },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Teacher Daily Teaching Plan", modifier = Modifier.padding(8.dp))
                             }
                         }
                     }
@@ -382,6 +480,15 @@ fun AdminPanelScreen(navController: NavController) {
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text("Developer Options", modifier = Modifier.padding(8.dp))
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { navController.navigate("admin_give_holiday") },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Admin),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Give a Holiday", modifier = Modifier.padding(8.dp))
                             }
                         }
                     }
@@ -440,6 +547,12 @@ fun AdminPanelScreen(navController: NavController) {
                     if (adminPasswordInput == showAdminPasswordDialog!!["password"]) {
                         isAdminType = showAdminPasswordDialog!!["type"] as? String ?: "admin"
                         adminPermissions = showAdminPasswordDialog!!["permissions"] as? List<String> ?: emptyList()
+                        
+                        prefs.edit()
+                            .putString("saved_admin_type", isAdminType)
+                            .putStringSet("saved_admin_perms", adminPermissions.toSet())
+                            .apply()
+                            
                         activeSection = "dashboard"
                         showAdminPasswordDialog = null
                     } else {

@@ -1,0 +1,25 @@
+        composable("staff_auth") { StaffAuthScreen(navController) }
+--
+        composable("staff_registration") { com.rajeducational.erp.ui.staff.StaffRegistrationScreen(navController) }
+        composable("staff_login") { com.rajeducational.erp.ui.staff.StaffLoginScreen(navController) }
+        composable("staff_announcements") { com.rajeducational.erp.ui.staff.StaffAnnouncementsScreen(navController) }
+        composable("staff_dashboard") { com.rajeducational.erp.ui.staff.StaffDashboardScreen(navController) }
+        composable("staff_gallery") { com.rajeducational.erp.ui.staff.StaffGalleryScreen(navController) }
+        composable("staff_students") { StaffStudentsScreen(navController) }
+        composable("staff_all_students") { StaffAllStudentsScreen(navController) }
+        composable("staff_reports") { StaffReportsScreen(navController) }
+        composable("staff_ratings") { StaffRatingsScreen(navController) }
+        composable("staff_student_ratings_detail") { com.rajeducational.erp.ui.staff.StaffStudentRatingsDetailScreen(navController) }
+        composable("staff_management_ratings_detail") { com.rajeducational.erp.ui.staff.StaffManagementRatingsDetailScreen(navController) }
+        composable("staff_profile") { com.rajeducational.erp.ui.staff.StaffProfileScreen(navController) }
+        composable("staff_more") { com.rajeducational.erp.ui.staff.StaffMoreScreen(navController) }
+        composable("staff_attendance_control_center") { com.rajeducational.erp.ui.staff.StaffAttendanceControlCenter(navController) }
+        composable("staff_attendance_settings") { com.rajeducational.erp.ui.staff.StaffAttendanceSettingsScreen(navController) }
+        composable("staff_attendance_report_control") { com.rajeducational.erp.ui.staff.StaffAttendanceReportControlScreen(navController) }
+        composable("staff_attendance_report_individual") { com.rajeducational.erp.ui.staff.StaffAttendanceReportIndividualScreen(navController) }
+        composable("staff_attendance_report_class") { com.rajeducational.erp.ui.staff.StaffAttendanceReportClassScreen(navController) }
+--
+        composable("staff_send_announcement") { com.rajeducational.erp.ui.staff.StaffSendAnnouncementScreen(navController) }
+        composable("staff_send_local_announcement") { com.rajeducational.erp.ui.staff.StaffSendLocalAnnouncementScreen(navController) }
+        composable("staff_student_qr_registration") { com.rajeducational.erp.ui.staff.StaffStudentQRRegistrationScreen(navController) }
+        composable("staff_messages") { com.rajeducational.erp.ui.staff.StaffMessagesScreen(navController) }

@@ -37,6 +37,7 @@ fun TeacherRegistrationScreen(navController: NavController) {
     var phone by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
+    var departmentName by remember { mutableStateOf("") }
 
     var colleges by remember { mutableStateOf<List<College>>(emptyList()) }
     var selectedCollege by remember { mutableStateOf<College?>(null) }
@@ -118,6 +119,13 @@ fun TeacherRegistrationScreen(navController: NavController) {
                         value = address,
                         onValueChange = { address = it },
                         label = { Text("Address") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = departmentName,
+                        onValueChange = { departmentName = it },
+                        label = { Text("Department Name") },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(16.dp))
@@ -275,7 +283,7 @@ fun TeacherRegistrationScreen(navController: NavController) {
 
             Button(
                 onClick = {
-                    if (name.isNotBlank() && phone.isNotBlank() && address.isNotBlank() && password.isNotBlank() && selectedCollege != null && selectedCourses.isNotEmpty() && selectedYears.isNotEmpty()) {
+                    if (name.isNotBlank() && phone.isNotBlank() && address.isNotBlank() && departmentName.isNotBlank() && password.isNotBlank() && selectedCollege != null && selectedCourses.isNotEmpty() && selectedYears.isNotEmpty()) {
                         if (password != confirmPassword) {
                             android.widget.Toast.makeText(context, "Passwords do not match", android.widget.Toast.LENGTH_SHORT).show()
                             return@Button
@@ -303,6 +311,7 @@ fun TeacherRegistrationScreen(navController: NavController) {
                                     "phone" to trimmedPhone,
                                     "email" to email.trim(),
                                     "address" to address.trim(),
+                                    "departmentName" to departmentName.trim(),
                                     "password" to trimmedPassword,
                                     "collegeId" to selectedCollege!!.id,
                                     "collegeName" to selectedCollege!!.name,
@@ -320,6 +329,7 @@ fun TeacherRegistrationScreen(navController: NavController) {
                                     putString("teacher_name", name.trim())
                                     putString("teacher_phone", trimmedPhone)
                                     putString("teacher_email", email.trim())
+                                    putString("teacher_department", departmentName.trim())
                                     putString("teacher_college", selectedCollege!!.name)
                                     putString("teacher_course", firstCourseName)
                                     putStringSet("teacher_courses", courseNames.toSet())
@@ -329,7 +339,7 @@ fun TeacherRegistrationScreen(navController: NavController) {
                                 }
                                 
                                 android.widget.Toast.makeText(context, "Registration successful", android.widget.Toast.LENGTH_SHORT).show()
-                                navController.navigate("teacher_announcements") {
+                                navController.navigate("face_registration/teacher/${docRef.id}") {
                                     popUpTo(0)
                                 }
                             } catch (e: Exception) {

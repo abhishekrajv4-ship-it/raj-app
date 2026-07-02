@@ -20,19 +20,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+
+
 import androidx.navigation.NavController
 import com.rajeducational.erp.theme.AppColors
+import com.rajeducational.erp.ui.components.AttendancePercentageBadge
+import com.rajeducational.erp.ui.components.AttendanceStatsCard
 import kotlinx.coroutines.launch
 
 // ===== STUDENT PROFILE =====
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentProfileScreen(navController: NavController) {
-    Scaffold(topBar = { TopAppBar(title = { Text("My Profile") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.Default.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Student, titleContentColor = Color.White, navigationIconContentColor = Color.White)) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("My Profile") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.Default.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = getStudentThemeColor(), titleContentColor = Color.White, navigationIconContentColor = Color.White)) }) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(modifier = Modifier.size(64.dp).clip(CircleShape).background(AppColors.Student), contentAlignment = Alignment.Center) { Text("T", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold) }
+                    Box(modifier = Modifier.size(64.dp).clip(CircleShape).background(getStudentThemeColor()), contentAlignment = Alignment.Center) { Text("T", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold) }
                     Spacer(modifier = Modifier.height(12.dp))
                     Text("Test Student", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
                     Text("RNI-2024-001", fontSize = 13.sp, color = AppColors.TextSecondary)
@@ -58,20 +63,68 @@ fun StudentProfileScreen(navController: NavController) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentFeesScreen(navController: NavController) {
-    Scaffold(topBar = { TopAppBar(title = { Text("Fee Document") }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Student, titleContentColor = Color.White)) }) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
-            // Fee Reminder
-            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFCE4EC)), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Warning, "Pending", tint = AppColors.Error)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Fees Pending - Contact admin", color = AppColors.Error, fontWeight = FontWeight.SemiBold)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+    
+    val sharedPrefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
+    val studentId = sharedPrefs.getString("student_id", null)
+    
+    var studentProfile by remember { mutableStateOf<Map<String, Any>?>(null) }
+    
+    LaunchedEffect(studentId) {
+        if (studentId != null) {
+            firestore.collection("students").document(studentId!!).addSnapshotListener { snapshot, _ ->
+                if (snapshot != null && snapshot.exists()) {
+                    studentProfile = snapshot.data
                 }
             }
+        }
+    }
+
+    val hasFeeReminder = studentProfile?.get("hasFeeReminder") as? Boolean ?: false
+    val feeReminderExpiry = studentProfile?.get("feeReminderExpiry") as? Long ?: 0L
+    val feeReminderText = studentProfile?.get("feeReminderText") as? String ?: ""
+    val isFeeReminderActive = hasFeeReminder && System.currentTimeMillis() < feeReminderExpiry
+
+    Scaffold(topBar = { 
+        TopAppBar(
+            title = { Text("Fee Reminder") }, 
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = getStudentThemeColor(), titleContentColor = Color.White),
+            navigationIcon = {
+                IconButton(onClick = { navController.navigateUp() }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
+                }
+            }
+        ) 
+    }) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            if (isFeeReminderActive) {
+                // Fee Reminder
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFCE4EC)), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Warning, "Pending", tint = AppColors.Error)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text("Fees Pending", color = AppColors.Error, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(feeReminderText, color = AppColors.Navy, fontSize = 16.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        val dateFormat = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault())
+                        Text("Due Date: ${dateFormat.format(java.util.Date(feeReminderExpiry))}", color = AppColors.Error, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CheckCircle, "Clear", tint = Color(0xFF4CAF50))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("No pending fees or reminders.", color = Color(0xFF388E3C), fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            
             Spacer(modifier = Modifier.height(16.dp))
-            Text("Select College", fontWeight = FontWeight.SemiBold)
-            // College chips placeholder
-            Text("Select Course", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp))
             // Fee document image placeholder
             Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp), shape = RoundedCornerShape(12.dp)) {
                 Column(modifier = Modifier.padding(48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -87,7 +140,7 @@ fun StudentFeesScreen(navController: NavController) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentRatingsScreen(navController: NavController) {
-    Scaffold(topBar = { TopAppBar(title = { Text("Rate Teachers") }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Student, titleContentColor = Color.White)) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("Rate Teachers") }, colors = TopAppBarDefaults.topAppBarColors(containerColor = getStudentThemeColor(), titleContentColor = Color.White)) }) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState())) {
             Text("Your ratings are anonymous. Teachers cannot see who rated them.", fontSize = 12.sp, color = AppColors.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(16.dp))
             // Teacher rating cards
@@ -97,7 +150,7 @@ fun StudentRatingsScreen(navController: NavController) {
                 Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), shape = RoundedCornerShape(12.dp)) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(AppColors.Student), contentAlignment = Alignment.Center) { Text(name.first().toString(), color = Color.White, fontWeight = FontWeight.Bold) }
+                            Box(modifier = Modifier.size(44.dp).clip(CircleShape).background(getStudentThemeColor()), contentAlignment = Alignment.Center) { Text(name.first().toString(), color = Color.White, fontWeight = FontWeight.Bold) }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column { Text(name, fontWeight = FontWeight.SemiBold); Text("$dept", fontSize = 12.sp, color = AppColors.TextSecondary) }
                         }
@@ -105,7 +158,7 @@ fun StudentRatingsScreen(navController: NavController) {
                         Row { (1..5).forEach { i -> IconButton(onClick = { rating = i }) { Icon(if (i <= rating) Icons.Default.Star else Icons.Default.StarOutline, "Star", tint = AppColors.StarYellow, modifier = Modifier.size(32.dp)) } } }
                         OutlinedTextField(value = feedback, onValueChange = { feedback = it }, label = { Text("Optional feedback (anonymous)") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp), maxLines = 3)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Button(onClick = {}, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = AppColors.Student), shape = RoundedCornerShape(10.dp)) { Text("Submit Rating") }
+                        Button(onClick = {}, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = getStudentThemeColor()), shape = RoundedCornerShape(10.dp)) { Text("Submit Rating") }
                     }
                 }
             }
@@ -142,15 +195,11 @@ fun StudentGalleryScreen(navController: NavController) {
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
                 if (intent?.action == android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE) {
-                    downloadCompleteMessage = "Downloaded successfully"
+                    downloadCompleteMessage = "Photo downloaded in gallery"
                 }
             }
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), android.content.Context.RECEIVER_EXPORTED)
-        } else {
-            context.registerReceiver(receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE))
-        }
+        androidx.core.content.ContextCompat.registerReceiver(context, receiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         onDispose {
             context.unregisterReceiver(receiver)
         }
@@ -161,7 +210,7 @@ fun StudentGalleryScreen(navController: NavController) {
             TopAppBar(
                 title = { Text("Gallery") },
                 navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Student, titleContentColor = Color.White, navigationIconContentColor = Color.White)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = getStudentThemeColor(), titleContentColor = Color.White, navigationIconContentColor = Color.White)
             )
         },
         snackbarHost = {
@@ -183,7 +232,7 @@ fun StudentGalleryScreen(navController: NavController) {
         Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background)) {
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = AppColors.Student)
+                    CircularProgressIndicator(color = getStudentThemeColor())
                 }
             } else if (photos.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -276,7 +325,7 @@ fun StudentGalleryScreen(navController: NavController) {
                             downloadManager.enqueue(request)
                             android.widget.Toast.makeText(context, "Download started...", android.widget.Toast.LENGTH_SHORT).show()
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.Student),
+                        colors = ButtonDefaults.buttonColors(containerColor = getStudentThemeColor()),
                         modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp)
                     ) {
                         Icon(Icons.Default.Download, contentDescription = "Download")
@@ -293,140 +342,7 @@ fun StudentGalleryScreen(navController: NavController) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentVotingScreen(navController: NavController) {
-    var isVotingEnabled by remember { mutableStateOf(false) }
-    var candidates by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
-    val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
-    var votedFor by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var hasVoted by remember { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
-
-    LaunchedEffect(Unit) {
-        val sharedPrefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
-        val studentId = sharedPrefs.getString("student_id", null)
-        
-        firestore.collection("settings").document("voting")
-            .addSnapshotListener { snapshot, _ ->
-                if (snapshot != null && snapshot.exists()) {
-                    isVotingEnabled = snapshot.getBoolean("isEnabled") ?: false
-                }
-            }
-
-        firestore.collection("council_candidates")
-            .addSnapshotListener { snapshot, _ ->
-                if (snapshot != null) {
-                    candidates = snapshot.documents.map { doc ->
-                        val data = doc.data?.toMutableMap() ?: mutableMapOf()
-                        data["id"] = doc.id
-                        data
-                    }
-                }
-            }
-            
-        if (studentId != null) {
-            firestore.collection("student_votes").document(studentId)
-                .addSnapshotListener { snapshot, _ ->
-                    if (snapshot != null && snapshot.exists()) {
-                        hasVoted = true
-                    }
-                }
-        }
-    }
-
-    Scaffold(topBar = { TopAppBar(title = { Text("Council Voting") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Student, titleContentColor = Color.White, navigationIconContentColor = Color.White)) }) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
-            Text("Council Elections", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            if (!isVotingEnabled) {
-                Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))) {
-                    Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Block, "Closed", tint = Color(0xFFFF9800), modifier = Modifier.size(48.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Voting is currently closed", fontWeight = FontWeight.Bold, color = AppColors.Navy)
-                        Text("Please check back later or contact admin.", fontSize = 14.sp, color = AppColors.TextSecondary, textAlign = TextAlign.Center)
-                    }
-                }
-            } else if (hasVoted) {
-                 Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))) {
-                    Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.CheckCircle, "Voted", tint = Color(0xFF4CAF50), modifier = Modifier.size(48.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("You have already voted!", fontWeight = FontWeight.Bold, color = AppColors.Navy)
-                        Text("Thank you for participating in the council elections.", fontSize = 14.sp, color = AppColors.TextSecondary, textAlign = TextAlign.Center)
-                    }
-                }
-            } else {
-                Text("Select one candidate per position", fontSize = 13.sp, color = AppColors.TextSecondary, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                val positions = candidates.mapNotNull { it["designation"] as? String }.distinct()
-                
-                if (positions.isEmpty()) {
-                    Text("No candidates available for voting.", color = AppColors.TextSecondary, modifier = Modifier.padding(16.dp))
-                }
-                
-                positions.forEach { pos ->
-                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), shape = RoundedCornerShape(12.dp)) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(pos, fontWeight = FontWeight.Bold, color = AppColors.Student)
-                            Spacer(modifier = Modifier.height(10.dp))
-                            
-                            val posCandidates = candidates.filter { it["designation"] == pos }
-                            posCandidates.forEach { candidate ->
-                                val name = candidate["name"] as? String ?: ""
-                                val id = candidate["id"] as? String ?: ""
-                                val isSelected = votedFor[pos] == id
-                                
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().clickable { 
-                                        val newVotes = votedFor.toMutableMap()
-                                        newVotes[pos] = id
-                                        votedFor = newVotes
-                                    }.border(1.dp, if (isSelected) AppColors.Student else Color(0xFFEEEEEE), RoundedCornerShape(10.dp)).padding(12.dp), 
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    RadioButton(selected = isSelected, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = AppColors.Student))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(name, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, color = if (isSelected) AppColors.Student else AppColors.TextPrimary)
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                            }
-                        }
-                    }
-                }
-                
-                if (positions.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = {
-                            if (votedFor.size == positions.size) {
-                                val sharedPrefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
-                                val studentId = sharedPrefs.getString("student_id", null)
-                                if (studentId != null) {
-                                    firestore.collection("student_votes").document(studentId).set(mapOf("voted" to true))
-                                    votedFor.forEach { (_, candidateId) ->
-                                        firestore.collection("council_candidates").document(candidateId)
-                                            .update("votes", com.google.firebase.firestore.FieldValue.increment(1))
-                                    }
-                                    hasVoted = true
-                                    android.widget.Toast.makeText(context, "Votes submitted successfully!", android.widget.Toast.LENGTH_SHORT).show()
-                                } else {
-                                    android.widget.Toast.makeText(context, "Error: Student ID not found. Please relogin.", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                android.widget.Toast.makeText(context, "Please vote for all positions.", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }, 
-                        modifier = Modifier.fillMaxWidth(), 
-                        colors = ButtonDefaults.buttonColors(containerColor = AppColors.Student), 
-                        shape = RoundedCornerShape(12.dp)
-                    ) { 
-                        Text("Submit Votes", modifier = Modifier.padding(8.dp), fontWeight = FontWeight.Bold) 
-                    }
-                }
-            }
-        }
-    }
+    com.rajeducational.erp.ui.common.VotingScreen(navController, "student")
 }
 
 // ===== DATA CLASSES FOR MESSAGING =====
@@ -436,7 +352,9 @@ data class ChatContact(
     val detail: String,
     val isTeacher: Boolean,
     val college: String = "",
-    val course: String = ""
+    val course: String = "",
+    val isStaff: Boolean = false,
+    val role: String = "Teacher"
 )
 
 data class StudentChatMessage(
@@ -508,8 +426,8 @@ fun StudentMessagesScreen(navController: NavController) {
                                 id = doc.id,
                                 studentId = doc.getString("studentId") ?: "",
                                 studentName = doc.getString("studentName") ?: "",
-                                teacherId = doc.getString("teacherId") ?: "",
-                                teacherName = doc.getString("teacherName") ?: "",
+                                teacherId = doc.getString("teacherId") ?: doc.getString("staffId") ?: "",
+                                teacherName = doc.getString("teacherName") ?: doc.getString("staffName") ?: "",
                                 senderId = doc.getString("senderId") ?: "",
                                 senderName = doc.getString("senderName") ?: "",
                                 message = doc.getString("message") ?: "",
@@ -524,32 +442,63 @@ fun StudentMessagesScreen(navController: NavController) {
         }
     }
     
-    // Load Teachers
+    // Load Teachers and Staffs
     LaunchedEffect(Unit) {
-        com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("teachers")
+        val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+        var loadedTeachers = emptyList<ChatContact>()
+        var loadedStaffs = emptyList<ChatContact>()
+        
+        fun mergeAndSet() {
+            teachersList = loadedTeachers + loadedStaffs
+            isContactsLoading = false
+        }
+        
+        firestore.collection("teachers")
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
-                    teachersList = snapshot.documents.map { doc ->
+                    loadedTeachers = snapshot.documents.map { doc ->
                         ChatContact(
                             id = doc.id,
                             name = doc.getString("name") ?: "Unknown Teacher",
                             detail = "College: ${doc.getString("collegeName") ?: ""} | Course: ${doc.getString("course") ?: ""}",
                             isTeacher = true,
                             college = doc.getString("collegeName") ?: "",
-                            course = doc.getString("course") ?: ""
+                            course = doc.getString("course") ?: "",
+                            isStaff = false,
+                            role = "Teacher"
                         )
                     }
+                    mergeAndSet()
                 }
-                isContactsLoading = false
+            }
+            
+        firestore.collection("staffs")
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    loadedStaffs = snapshot.documents.map { doc ->
+                        ChatContact(
+                            id = doc.id,
+                            name = doc.getString("name") ?: "Unknown Staff",
+                            detail = "College: ${doc.getString("collegeName") ?: ""} | Dept: ${doc.getString("departmentName") ?: doc.getString("course") ?: "Staff"}",
+                            isTeacher = false,
+                            college = doc.getString("collegeName") ?: "",
+                            course = doc.getString("course") ?: doc.getString("departmentName") ?: "Staff",
+                            isStaff = true,
+                            role = "Staff"
+                        )
+                    }
+                    mergeAndSet()
+                }
             }
     }
     
     // Real-time Chat listener
     DisposableEffect(studentId, selectedContact) {
         if (studentId.isNotEmpty() && selectedContact != null) {
+            val idField = if (selectedContact!!.isStaff) "staffId" to "staffName" else "teacherId" to "teacherName"
             val listener = com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("student_chats")
                 .whereEqualTo("studentId", studentId)
-                .whereEqualTo("teacherId", selectedContact!!.id)
+                .whereEqualTo(idField.first, selectedContact!!.id)
                 .addSnapshotListener { snapshot, _ ->
                     if (snapshot != null) {
                         // Mark incoming messages as read
@@ -565,8 +514,8 @@ fun StudentMessagesScreen(navController: NavController) {
                                 id = doc.id,
                                 studentId = doc.getString("studentId") ?: "",
                                 studentName = doc.getString("studentName") ?: "",
-                                teacherId = doc.getString("teacherId") ?: "",
-                                teacherName = doc.getString("teacherName") ?: "",
+                                teacherId = doc.getString("teacherId") ?: doc.getString("staffId") ?: "",
+                                teacherName = doc.getString("teacherName") ?: doc.getString("staffName") ?: "",
                                 senderId = doc.getString("senderId") ?: "",
                                 senderName = doc.getString("senderName") ?: "",
                                 message = doc.getString("message") ?: "",
@@ -612,7 +561,9 @@ fun StudentMessagesScreen(navController: NavController) {
         id = "admin",
         name = "Admin",
         detail = "Raj Educational Trust Administrator",
-        isTeacher = false
+        isTeacher = false,
+        isStaff = false,
+        role = "Admin"
     )
     
     LaunchedEffect(teachersList, savedContactId) {
@@ -647,11 +598,9 @@ fun StudentMessagesScreen(navController: NavController) {
         if (text.trim().isEmpty() && fileUrl.isEmpty()) return
         if (selectedContact == null) return
         
-        val msgData = hashMapOf(
+        val msgData = hashMapOf<String, Any>(
             "studentId" to studentId,
             "studentName" to studentName,
-            "teacherId" to selectedContact!!.id,
-            "teacherName" to selectedContact!!.name,
             "senderId" to studentId,
             "senderName" to studentName,
             "message" to text,
@@ -660,6 +609,13 @@ fun StudentMessagesScreen(navController: NavController) {
             "timestamp" to System.currentTimeMillis(),
             "isRead" to false
         )
+        if (selectedContact!!.isStaff) {
+            msgData["staffId"] = selectedContact!!.id
+            msgData["staffName"] = selectedContact!!.name
+        } else {
+            msgData["teacherId"] = selectedContact!!.id
+            msgData["teacherName"] = selectedContact!!.name
+        }
         
         com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("student_chats")
             .add(msgData)
@@ -709,7 +665,7 @@ fun StudentMessagesScreen(navController: NavController) {
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = AppColors.Student,
+                    containerColor = getStudentThemeColor(),
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
                 )
@@ -745,14 +701,14 @@ fun StudentMessagesScreen(navController: NavController) {
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = Color.White,
                         unfocusedContainerColor = Color.White,
-                        focusedBorderColor = AppColors.Student,
+                        focusedBorderColor = getStudentThemeColor(),
                         unfocusedBorderColor = Color.LightGray
                     )
                 )
                 
                 if (isContactsLoading) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = AppColors.Student)
+                        CircularProgressIndicator(color = getStudentThemeColor())
                     }
                 } else if (filteredContacts.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -782,19 +738,31 @@ fun StudentMessagesScreen(navController: NavController) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     // Contact Avatar Circle
+                                    val avatarBg = when {
+                                        contact.id == "admin" -> Color(0xFFECEFF1)
+                                        contact.isStaff -> AppColors.Staff.copy(alpha = 0.15f)
+                                        else -> getStudentThemeColor().copy(alpha = 0.15f)
+                                    }
+                                    val avatarTint = when {
+                                        contact.id == "admin" -> Color(0xFF37474F)
+                                        contact.isStaff -> AppColors.Staff
+                                        else -> getStudentThemeColor()
+                                    }
+                                    val avatarIcon = when {
+                                        contact.id == "admin" -> Icons.Default.Security
+                                        contact.isStaff -> Icons.Default.Person
+                                        else -> Icons.Default.Person
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .size(44.dp)
-                                            .background(
-                                                if (contact.isTeacher) AppColors.Student.copy(alpha = 0.15f) else Color(0xFFE8F5E9),
-                                                CircleShape
-                                            ),
+                                            .background(avatarBg, CircleShape),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
-                                            imageVector = if (contact.isTeacher) Icons.Default.Person else Icons.Default.Security,
+                                            imageVector = avatarIcon,
                                             contentDescription = null,
-                                            tint = if (contact.isTeacher) AppColors.Student else Color(0xFF2E7D32)
+                                            tint = avatarTint
                                         )
                                     }
                                     
@@ -808,6 +776,31 @@ fun StudentMessagesScreen(navController: NavController) {
                                                 fontSize = 15.sp,
                                                 color = AppColors.Navy
                                             )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                color = when {
+                                                    contact.id == "admin" -> Color(0xFFECEFF1)
+                                                    contact.isStaff -> AppColors.Staff.copy(alpha = 0.15f)
+                                                    else -> AppColors.Teacher.copy(alpha = 0.15f)
+                                                },
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = when {
+                                                        contact.id == "admin" -> "Admin"
+                                                        contact.isStaff -> "Staff"
+                                                        else -> "Teacher"
+                                                    },
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = when {
+                                                        contact.id == "admin" -> Color(0xFF37474F)
+                                                        contact.isStaff -> AppColors.Staff
+                                                        else -> AppColors.Teacher
+                                                    },
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
                                             val unreadCount = allStudentChats.count { it.teacherId == contact.id && it.senderId == contact.id && !it.isRead }
                                             if (unreadCount > 0) {
                                                 Spacer(modifier = Modifier.width(8.dp))
@@ -837,6 +830,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                             maxLines = 1,
                                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                         )
+
                                     }
                                     
                                     Icon(
@@ -905,7 +899,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                 ) {
                                     Column(
                                         horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-                                        modifier = Modifier.fillMaxWidth(0.82f)
+                                        modifier = Modifier.widthIn(max = 280.dp)
                                     ) {
                                         // Sender Name if not me
                                         if (!isMe) {
@@ -927,7 +921,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                                 bottomEnd = if (isMe) 0.dp else 12.dp
                                             ),
                                             colors = CardDefaults.cardColors(
-                                                containerColor = if (isMe) AppColors.Student else Color.White
+                                                containerColor = if (isMe) getStudentThemeColor() else Color.White
                                             ),
                                             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                                         ) {
@@ -989,7 +983,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                                             Icon(
                                                                 imageVector = Icons.Default.InsertDriveFile,
                                                                 contentDescription = null,
-                                                                tint = if (isMe) Color.White else AppColors.Student,
+                                                                tint = if (isMe) Color.White else getStudentThemeColor(),
                                                                 modifier = Modifier.size(32.dp)
                                                             )
                                                             Spacer(modifier = Modifier.width(8.dp))
@@ -1031,7 +1025,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                                                 android.widget.Toast.makeText(context, "Download failed", android.widget.Toast.LENGTH_SHORT).show()
                                                             }
                                                         },
-                                                        colors = ButtonDefaults.textButtonColors(contentColor = if (isMe) Color.White else AppColors.Student),
+                                                        colors = ButtonDefaults.textButtonColors(contentColor = if (isMe) Color.White else getStudentThemeColor()),
                                                         contentPadding = PaddingValues(0.dp),
                                                         modifier = Modifier.height(30.dp)
                                                     ) {
@@ -1102,7 +1096,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                         .padding(horizontal = 16.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.AttachFile, contentDescription = null, tint = AppColors.Student)
+                                    Icon(Icons.Default.AttachFile, contentDescription = null, tint = getStudentThemeColor())
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = attachmentName,
@@ -1134,7 +1128,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                 IconButton(
                                     onClick = { filePickerLauncher.launch("*/*") }
                                 ) {
-                                    Icon(Icons.Default.AddCircleOutline, contentDescription = "Add attachment", tint = AppColors.Student)
+                                    Icon(Icons.Default.AddCircleOutline, contentDescription = "Add attachment", tint = getStudentThemeColor())
                                 }
                                 
                                 // Text Input Field
@@ -1148,7 +1142,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = Color(0xFFF9FAFB),
                                         unfocusedContainerColor = Color(0xFFF9FAFB),
-                                        focusedBorderColor = AppColors.Student,
+                                        focusedBorderColor = getStudentThemeColor(),
                                         unfocusedBorderColor = Color.LightGray
                                     )
                                 )
@@ -1159,7 +1153,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                 if (isUploading) {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(36.dp).padding(6.dp),
-                                        color = AppColors.Student,
+                                        color = getStudentThemeColor(),
                                         strokeWidth = 3.dp
                                     )
                                 } else {
@@ -1186,7 +1180,7 @@ fun StudentMessagesScreen(navController: NavController) {
                                         Icon(
                                             imageVector = Icons.Default.Send,
                                             contentDescription = "Send",
-                                            tint = if (messageText.trim().isNotEmpty() || attachmentUri != null) AppColors.Student else Color.Gray
+                                            tint = if (messageText.trim().isNotEmpty() || attachmentUri != null) getStudentThemeColor() else Color.Gray
                                         )
                                     }
                                 }
@@ -1215,11 +1209,11 @@ fun StudentEventsScreen(navController: NavController) {
         }
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Events") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Student, titleContentColor = Color.White, navigationIconContentColor = Color.White)) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("Events") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = getStudentThemeColor(), titleContentColor = Color.White, navigationIconContentColor = Color.White)) }) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState()).padding(16.dp)) {
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = AppColors.Student)
+                    CircularProgressIndicator(color = getStudentThemeColor())
                 }
             } else if (events.isEmpty()) {
                 Text("No events scheduled.", color = AppColors.TextSecondary)
@@ -1234,8 +1228,8 @@ fun StudentEventsScreen(navController: NavController) {
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)), shape = RoundedCornerShape(12.dp)) {
                                 Column(modifier = Modifier.padding(12.dp).width(40.dp), horizontalAlignment = Alignment.CenterHorizontally) { 
-                                    Text(event.date.take(2), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AppColors.Student) 
-                                    Text(event.month.take(3), fontSize = 12.sp, color = AppColors.Student) 
+                                    Text(event.date.take(2), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = getStudentThemeColor()) 
+                                    Text(event.month.take(3), fontSize = 12.sp, color = getStudentThemeColor()) 
                                 }
                             }
                             Spacer(modifier = Modifier.width(16.dp))
@@ -1244,7 +1238,7 @@ fun StudentEventsScreen(navController: NavController) {
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(event.place, fontSize = 14.sp, color = AppColors.TextSecondary) 
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("To see the photos click here.", fontSize = 12.sp, color = AppColors.Student)
+                                Text("To see the photos click here.", fontSize = 12.sp, color = getStudentThemeColor())
                             }
                             Icon(Icons.Default.ChevronRight, "View Details", tint = Color.LightGray)
                         }
@@ -1272,18 +1266,18 @@ fun StudentEventDetailScreen(navController: NavController, eventId: String) {
         }
     }
 
-    Scaffold(topBar = { TopAppBar(title = { Text(event?.name ?: "Event Details") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Student, titleContentColor = Color.White, navigationIconContentColor = Color.White)) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text(event?.name ?: "Event Details") }, navigationIcon = { IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = getStudentThemeColor(), titleContentColor = Color.White, navigationIconContentColor = Color.White)) }) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState())) {
             event?.let { e ->
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(e.name, fontWeight = FontWeight.Bold, fontSize = 24.sp, color = AppColors.Navy)
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Event, contentDescription = null, tint = AppColors.Student, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Event, contentDescription = null, tint = getStudentThemeColor(), modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("${e.date} ${e.month}", color = AppColors.TextSecondary)
                         Spacer(modifier = Modifier.width(16.dp))
-                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = AppColors.Student, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = getStudentThemeColor(), modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(e.place, color = AppColors.TextSecondary)
                     }
@@ -1370,7 +1364,7 @@ fun StudentEventDetailScreen(navController: NavController, eventId: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentNoticesScreen(navController: NavController) {
-    Scaffold(topBar = { TopAppBar(title = { Text("Notices") }, colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Student, titleContentColor = Color.White)) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("Notices") }, colors = TopAppBarDefaults.topAppBarColors(containerColor = getStudentThemeColor(), titleContentColor = Color.White)) }) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState())) {
             listOf("Exam Schedule Released" to "Check the updated exam timetable", "Holiday Notice" to "College will remain closed on 26th Jan").forEach { (title, body) ->
                 Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), shape = RoundedCornerShape(12.dp)) {
@@ -1382,4 +1376,14 @@ fun StudentNoticesScreen(navController: NavController) {
             }
         }
     }
+}
+
+
+
+@Composable
+fun getStudentThemeColor(): androidx.compose.ui.graphics.Color {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sharedPrefs = androidx.compose.runtime.remember { context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE) }
+    val isAttending = sharedPrefs.getBoolean("is_attending", true)
+    return if (isAttending) com.rajeducational.erp.theme.AppColors.Student else androidx.compose.ui.graphics.Color.Red
 }

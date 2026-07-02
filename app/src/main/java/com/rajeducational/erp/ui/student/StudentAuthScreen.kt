@@ -26,8 +26,7 @@ import kotlinx.coroutines.tasks.await
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
 fun StudentAuthScreen(navController: NavController) {
-    val cameraPermissionState = rememberPermissionState(android.Manifest.permission.CAMERA)
-    var mode by remember { mutableStateOf("scan_teacher_qr") } // scan_teacher_qr, register, login
+    var mode by remember { mutableStateOf("register") } // register, login
     
     // Auth variables
     var loginPhone by remember { mutableStateOf("") }
@@ -53,7 +52,6 @@ fun StudentAuthScreen(navController: NavController) {
     
     var scannedTeacherId by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    var isChecking by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
     
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -84,19 +82,17 @@ fun StudentAuthScreen(navController: NavController) {
             TopAppBar(
                 title = { 
                     Text(
-                        if (mode == "scan_teacher_qr") "Student Scanner" 
-                        else if (mode == "login") "Student Login" 
-                        else "Student Details", 
+                        if (mode == "login") "Student Login" else "Student Details", 
                         fontWeight = FontWeight.Bold, 
                         color = Color.White
                     ) 
                 },
                 navigationIcon = {
                     IconButton(onClick = { 
-                        if (mode == "scan_teacher_qr") {
+                        if (mode == "register") {
                             navController.popBackStack() 
                         } else {
-                            mode = "scan_teacher_qr" 
+                            mode = "register" 
                             error = ""
                         }
                     }) {
@@ -104,12 +100,12 @@ fun StudentAuthScreen(navController: NavController) {
                     }
                 },
                 actions = {
-                    if (mode == "scan_teacher_qr") {
+                    if (mode == "register") {
                         TextButton(onClick = { mode = "login"; error = "" }) {
                             Text("Login", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     } else if (mode == "login") {
-                        TextButton(onClick = { mode = "scan_teacher_qr"; error = "" }) {
+                        TextButton(onClick = { mode = "register"; error = "" }) {
                             Text("Register", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -132,114 +128,6 @@ fun StudentAuthScreen(navController: NavController) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             when (mode) {
-                "scan_teacher_qr" -> {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Icon(Icons.Default.QrCodeScanner, "Scanner", tint = AppColors.Student, modifier = Modifier.size(64.dp))
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Authorize yourself by scanning the QR code.", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Navy, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("The QR code is available in the Teacher panel.", fontSize = 14.sp, color = AppColors.TextSecondary)
-                    
-                    Spacer(modifier = Modifier.height(32.dp))
-                    
-                    if (cameraPermissionState.status.isGranted) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(350.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.Black)
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                if (!isChecking) {
-                                    com.rajeducational.erp.ui.teacher.QRScannerPreview { code ->
-                                        if (!isChecking) {
-                                            try {
-                                                val jsonObject = org.json.JSONObject(code)
-                                                if (jsonObject.getString("type") == "teacher_student_reg") {
-                                                    val tid = jsonObject.getString("teacherId")
-                                                    val token = jsonObject.getString("token")
-                                                    
-                                                    isChecking = true
-                                                    coroutineScope.launch {
-                                                        try {
-                                                            val doc = firestore.collection("settings").document("student_qr_$tid").get().await()
-                                                            if (doc.exists()) {
-                                                                val serverToken = doc.getString("token")
-                                                                val timestamp = doc.getLong("timestamp") ?: 0L
-                                                                val currentTime = System.currentTimeMillis()
-                                                                
-                                                                if (serverToken == token && (currentTime - timestamp <= 120 * 1000)) {
-                                                                    scannedTeacherId = tid
-                                                                    mode = "register"
-                                                                    error = ""
-                                                                } else {
-                                                                    error = "QR Code Expired. Please ask the teacher to show the refreshed QR."
-                                                                }
-                                                            } else {
-                                                                error = "Teacher not active or invalid QR session."
-                                                            }
-                                                        } catch (e: Exception) {
-                                                            error = "Verification failed: ${e.message}"
-                                                        } finally {
-                                                            kotlinx.coroutines.delay(240000)
-                                                            isChecking = false
-                                                        }
-                                                    }
-                                                } else {
-                                                    error = "Invalid QR Code for student registration"
-                                                    isChecking = true
-                                                    coroutineScope.launch {
-                                                        kotlinx.coroutines.delay(240000)
-                                                        isChecking = false
-                                                    }
-                                                }
-                                            } catch (e: Exception) {
-                                                error = "Invalid QR Code format"
-                                                isChecking = true
-                                                coroutineScope.launch {
-                                                    kotlinx.coroutines.delay(240000)
-                                                    isChecking = false
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (isChecking) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.align(Alignment.Center),
-                                        color = AppColors.Student
-                                    )
-                                }
-                            }
-                        }
-                    } else {
-                        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
-                            Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Camera permission is required to scan the QR code.", textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Button(onClick = { cameraPermissionState.launchPermissionRequest() }, colors = ButtonDefaults.buttonColors(containerColor = AppColors.Student)) {
-                                    Text("Grant Permission")
-                                }
-                            }
-                        }
-                    }
-                    
-                    if (error.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(error, color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-                    
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Text(
-                        "Note: Please scan the QR code which you will get from the teacher. After scanning the QR code, you will be able to register.",
-                        fontSize = 14.sp,
-                        color = AppColors.TextSecondary,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                    Spacer(modifier = Modifier.height(32.dp))
-                }
                 "register" -> {
                     Text("Complete Registration", fontWeight = FontWeight.Bold, fontSize = 24.sp, color = AppColors.Navy)
                     Spacer(modifier = Modifier.height(16.dp))
@@ -479,32 +367,24 @@ fun StudentAuthScreen(navController: NavController) {
                                             "password" to trimmedPassword,
                                             "college" to selectedCollegeObj!!.name,
                                             "course" to selectedCourseObj!!.name,
-                                            "session" to selectedSession
+                                            "session" to selectedSession,
+                                            "isAttending" to true,
+                                            "approvalStatus" to "pending"
                                         )
-                                        if (scannedTeacherId.isNotEmpty()) {
-                                            studentData["teacherId"] = scannedTeacherId
-                                        }
                                         
                                         firestore.collection("students").document(newAppId).set(studentData).await()
                                         
+                                        // Save pending student id to track approval status
                                         val sharedPrefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
                                         sharedPrefs.edit().apply {
-                                            putString("student_id", newAppId)
-                                            putString("student_name", studentName.trim())
-                                            putString("student_phone", trimmedPhone)
-                                            putString("student_email", email.trim())
-                                            putString("student_address", address.trim())
-                                            putString("student_college", selectedCollegeObj!!.name)
-                                            putString("student_course", selectedCourseObj!!.name)
-                                            putString("student_session", selectedSession)
-                                            putBoolean("is_logged_in", true)
+                                            putString("pending_student_id", newAppId)
                                             apply()
                                         }
                                         
-                                        android.widget.Toast.makeText(context, "Registration Successful", android.widget.Toast.LENGTH_SHORT).show()
-                                        navController.navigate("student_dashboard") {
-                                            popUpTo("landing")
-                                        }
+                                        android.widget.Toast.makeText(context, "Registration Submitted. Please complete face registration.", android.widget.Toast.LENGTH_SHORT).show()
+                                         navController.navigate("face_registration/student/" + newAppId) {
+                                             popUpTo("landing")
+                                         }
                                     } catch (e: Exception) {
                                         error = "Registration failed: ${e.message}"
                                     } finally {
@@ -580,22 +460,34 @@ fun StudentAuthScreen(navController: NavController) {
                                             
                                             if (!snapshot.isEmpty) {
                                                 val doc = snapshot.documents[0]
-                                                val prefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
-                                                prefs.edit().apply {
-                                                    putString("student_id", doc.id)
-                                                    putString("student_name", doc.getString("fullName"))
-                                                    putString("student_phone", doc.getString("phone"))
-                                                    putString("student_email", doc.getString("email"))
-                                                    putString("student_address", doc.getString("address"))
-                                                    putString("student_college", doc.getString("college"))
-                                                    putString("student_course", doc.getString("course"))
-                                                    putString("student_session", doc.getString("session"))
-                                                    putBoolean("is_logged_in", true)
-                                                    apply()
-                                                }
-                                                android.widget.Toast.makeText(context, "Login Successful", android.widget.Toast.LENGTH_SHORT).show()
-                                                navController.navigate("student_dashboard") {
-                                                    popUpTo("landing")
+                                                val isAttending = doc.getBoolean("isAttending") ?: true
+                                                val status = doc.getString("approvalStatus") ?: "approved"
+                                                
+                                                if (!isAttending) {
+                                                    error = "This login is only for Attending Students."
+                                                } else if (status == "pending") {
+                                                    error = "Your account is pending approval from the teacher."
+                                                } else if (status == "declined") {
+                                                    error = "Your registration was declined."
+                                                } else {
+                                                    val prefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
+                                                    prefs.edit().apply {
+                                                        putString("student_id", doc.id)
+                                                        putString("student_name", doc.getString("fullName"))
+                                                        putString("student_phone", doc.getString("phone"))
+                                                        putString("student_email", doc.getString("email"))
+                                                        putString("student_address", doc.getString("address"))
+                                                        putString("student_college", doc.getString("college"))
+                                                        putString("student_course", doc.getString("course"))
+                                                        putString("student_session", doc.getString("session"))
+                                                        putBoolean("is_attending", true)
+                                                        putBoolean("is_logged_in", true)
+                                                        apply()
+                                                    }
+                                                    android.widget.Toast.makeText(context, "Login Successful", android.widget.Toast.LENGTH_SHORT).show()
+                                                    navController.navigate("student_dashboard") {
+                                                        popUpTo("landing")
+                                                    }
                                                 }
                                             } else {
                                                 error = "Invalid Phone Number or Password"

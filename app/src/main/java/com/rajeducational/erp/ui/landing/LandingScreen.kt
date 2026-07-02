@@ -29,7 +29,7 @@ data class RoleTile(val key: String, val label: String, val desc: String, val ic
 fun LandingScreen(navController: NavController) {
     val roles = listOf(
         RoleTile("student", "Student", "Access your dashboard", "school", AppColors.Student),
-        RoleTile("teacher", "Teacher", "Manage your classes", "easel", AppColors.Teacher),
+        RoleTile("teacher", "Teacher and Staff", "Manage your classes", "easel", AppColors.Teacher),
         RoleTile("guest", "Guest", "Explore our institution", "eye", AppColors.Guest),
         RoleTile("admin", "Admin", "Control centre", "shield", AppColors.Admin),
     )
@@ -51,6 +51,11 @@ fun LandingScreen(navController: NavController) {
     
     var hasUnreadGuestReplies by remember { mutableStateOf(false) }
     var hasUnreadAdminMessages by remember { mutableStateOf(false) }
+    var showTeacherStaffDialog by remember { mutableStateOf(false) }
+    var showStudentTypeDialog by remember { mutableStateOf(false) }
+    var showStudentApprovedDialog by remember { mutableStateOf(false) }
+    var approvedStudentId by remember { mutableStateOf<String?>(null) }
+    var approvedStudentDoc by remember { mutableStateOf<com.google.firebase.firestore.DocumentSnapshot?>(null) }
     
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -128,6 +133,23 @@ fun LandingScreen(navController: NavController) {
                             com.rajeducational.erp.util.NotificationHelper.showNotification(context, "New Reply", "You have a new reply from the Admin.")
                         }
                         guestPrevUnreadCount = unreadDocs.size
+                    }
+                }
+        }
+        
+        // Check for pending student approval
+        val studentPrefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
+        val pendingStudentId = studentPrefs.getString("pending_student_id", null)
+        if (pendingStudentId != null) {
+            firestore.collection("students").document(pendingStudentId)
+                .addSnapshotListener { doc, _ ->
+                    if (doc != null && doc.exists()) {
+                        val status = doc.getString("approvalStatus")
+                        if (status == "approved") {
+                            showStudentApprovedDialog = true
+                            approvedStudentId = pendingStudentId
+                            approvedStudentDoc = doc
+                        }
                     }
                 }
         }
@@ -268,8 +290,19 @@ fun LandingScreen(navController: NavController) {
                         modifier = Modifier.weight(1f),
                         onClick = {
                             when (role.key) {
-                                "student" -> navController.navigate("student_auth")
-                                "teacher" -> navController.navigate("teacher_auth")
+                                "student" -> {
+                                    val studentPrefsLocal = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
+                                    val localPendingId = studentPrefsLocal.getString("pending_student_id", null)
+                                    val isLoggedIn = studentPrefsLocal.getBoolean("is_logged_in", false)
+                                    if (isLoggedIn) {
+                                        navController.navigate("student_dashboard")
+                                    } else if (localPendingId != null) {
+                                        android.widget.Toast.makeText(context, "Kindly wait for your confirmation. You will be approved shortly.", android.widget.Toast.LENGTH_LONG).show()
+                                    } else {
+                                        showStudentTypeDialog = true
+                                    }
+                                }
+                                "teacher" -> showTeacherStaffDialog = true
                                 "guest" -> navController.navigate("guest_portal")
                                 "admin" -> navController.navigate("admin_panel")
                             }
@@ -333,6 +366,96 @@ fun LandingScreen(navController: NavController) {
         
         Spacer(modifier = Modifier.height(64.dp)) // Added space at the bottom
     }
+
+    if (showTeacherStaffDialog) {
+        AlertDialog(
+            onDismissRequest = { showTeacherStaffDialog = false },
+            title = { Text("Select Role") },
+            text = { Text("Are you a teacher or are you staff?") },
+            confirmButton = {
+                TextButton(onClick = { 
+                    showTeacherStaffDialog = false
+                    navController.navigate("teacher_auth")
+                }) {
+                    Text("Teacher")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { 
+                    showTeacherStaffDialog = false
+                    navController.navigate("staff_auth")
+                }) {
+                    Text("Staff", color = AppColors.Staff)
+                }
+            }
+        )
+    }
+
+    if (showStudentTypeDialog) {
+        AlertDialog(
+            onDismissRequest = { showStudentTypeDialog = false },
+            title = { Text("Student Selection", fontWeight = FontWeight.Bold, color = AppColors.Navy) },
+            text = { Text("Are you an attending student or a non-attending student?") },
+            confirmButton = {
+                TextButton(onClick = { 
+                    showStudentTypeDialog = false
+                    navController.navigate("student_auth")
+                }) {
+                    Text("Attending Student", fontWeight = FontWeight.Bold, color = AppColors.Student)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { 
+                    showStudentTypeDialog = false
+                    navController.navigate("non_attending_student_auth")
+                }) {
+                    Text("Non-Attending Student", fontWeight = FontWeight.Bold, color = Color.Red)
+                }
+            }
+        )
+    }
+
+    if (showStudentApprovedDialog && approvedStudentDoc != null && approvedStudentId != null) {
+        AlertDialog(
+            onDismissRequest = { }, // Force user to click OK
+            title = { Text("Registration Approved", fontWeight = FontWeight.Bold, color = AppColors.Student) },
+            text = { Text("You are registered successfully. You can now use your portal.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showStudentApprovedDialog = false
+                    val doc = approvedStudentDoc!!
+                    val id = approvedStudentId!!
+                    
+                    val prefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
+                    prefs.edit().apply {
+                        putString("student_id", doc.id)
+                        putString("student_name", doc.getString("fullName"))
+                        putString("student_phone", doc.getString("phone"))
+                        putString("student_email", doc.getString("email"))
+                        putString("student_address", doc.getString("address"))
+                        putString("student_college", doc.getString("college"))
+                        putString("student_course", doc.getString("course"))
+                        putString("student_session", doc.getString("session"))
+                        putBoolean("is_logged_in", true)
+                        remove("pending_student_id") // Clear pending
+                        apply()
+                    }
+                    val isAttending = doc.getBoolean("isAttending") ?: true
+                    if (isAttending) {
+                        navController.navigate("face_registration/student/$id") {
+                            popUpTo("landing")
+                        }
+                    } else {
+                        navController.navigate("student_dashboard") {
+                            popUpTo("landing")
+                        }
+                    }
+                }) {
+                    Text("OK", fontWeight = FontWeight.Bold, color = AppColors.Student)
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -380,6 +503,7 @@ fun RoleTileCard(role: RoleTile, modifier: Modifier = Modifier, showNotification
         }
     }
 }
+
 
 @Composable
 fun StatItem(value: String, label: String) {

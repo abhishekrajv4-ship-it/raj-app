@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.rajeducational.erp.theme.AppColors
+import androidx.compose.ui.graphics.asImageBitmap
+import com.rajeducational.erp.ui.components.AttendanceStatsCard
 
 @Composable
 fun StudentDashboardScreen(navController: NavController) {
@@ -28,6 +30,28 @@ fun StudentDashboardScreen(navController: NavController) {
     var announcements by remember { mutableStateOf<List<com.rajeducational.erp.data.Announcement>>(emptyList()) }
     var studentId by remember { mutableStateOf<String?>(null) }
     var studentProfile by remember { mutableStateOf<Map<String, Any>?>(null) }
+    var isProfileDeleted by remember { mutableStateOf(false) }
+    
+    var showQrDialog by remember { mutableStateOf(false) }
+    var qrContentString by remember { mutableStateOf("") }
+    var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var secondsRemaining by remember { mutableIntStateOf(15) }
+
+    LaunchedEffect(showQrDialog, studentId) {
+        if (showQrDialog) {
+            while (showQrDialog) {
+                val ts = System.currentTimeMillis()
+                qrContentString = "student_attendance_qr:${studentId ?: ""}:${ts}"
+                qrBitmap = com.rajeducational.erp.ui.admin.generateQrCode(qrContentString)
+                secondsRemaining = 15
+                for (i in 15 downTo 1) {
+                    if (!showQrDialog) break
+                    secondsRemaining = i
+                    kotlinx.coroutines.delay(1000)
+                }
+            }
+        }
+    }
     var editFullName by remember { mutableStateOf("") }
     var editPhone by remember { mutableStateOf("") }
     var editEmail by remember { mutableStateOf("") }
@@ -133,15 +157,20 @@ fun StudentDashboardScreen(navController: NavController) {
         studentId = sId
         com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("students").document(sId)
             .addSnapshotListener { snapshot, _ ->
-                if (snapshot != null && snapshot.exists()) {
-                    studentProfile = snapshot.data
-                    editFullName = snapshot.getString("fullName") ?: ""
-                    editPhone = snapshot.getString("phone") ?: ""
-                    editEmail = snapshot.getString("email") ?: ""
-                    editAddress = snapshot.getString("address") ?: ""
-                    editCollege = snapshot.getString("college") ?: ""
-                    editCourse = snapshot.getString("course") ?: ""
-                    editSession = snapshot.getString("session") ?: ""
+                if (snapshot != null) {
+                    if (snapshot.exists()) {
+                        studentProfile = snapshot.data
+                        editFullName = snapshot.getString("fullName") ?: ""
+                        editPhone = snapshot.getString("phone") ?: ""
+                        editEmail = snapshot.getString("email") ?: ""
+                        editAddress = snapshot.getString("address") ?: ""
+                        editCollege = snapshot.getString("college") ?: ""
+                        editCourse = snapshot.getString("course") ?: ""
+                        editSession = snapshot.getString("session") ?: ""
+                    } else {
+                        isProfileDeleted = true
+                        sharedPrefs.edit().clear().apply()
+                    }
                 }
             }
         
@@ -165,6 +194,24 @@ fun StudentDashboardScreen(navController: NavController) {
             }
     }
 
+    var holidayState by remember { mutableStateOf<com.rajeducational.erp.utils.HolidayHelper.HolidayCheckResult?>(null) }
+
+    LaunchedEffect(studentProfile) {
+        val tz = java.util.TimeZone.getTimeZone("Asia/Kolkata")
+        val cal = java.util.Calendar.getInstance(tz)
+        if (cal.get(java.util.Calendar.DAY_OF_WEEK) == java.util.Calendar.SUNDAY) {
+            holidayState = com.rajeducational.erp.utils.HolidayHelper.HolidayCheckResult(true, "Sunday")
+        } else if (studentProfile != null) {
+            val college = studentProfile?.get("college")?.toString() ?: ""
+            val course = studentProfile?.get("course")?.toString() ?: ""
+            val session = studentProfile?.get("session")?.toString() ?: ""
+            if (college.isNotEmpty()) {
+                val res = com.rajeducational.erp.utils.HolidayHelper.checkHolidayForStudent(college, course, session)
+                holidayState = res
+            }
+        }
+    }
+
     LaunchedEffect(studentProfile, colleges) {
         if (studentProfile != null && colleges.isNotEmpty()) {
             val collegeName = studentProfile?.get("college")?.toString() ?: ""
@@ -178,6 +225,10 @@ fun StudentDashboardScreen(navController: NavController) {
         }
     }
 
+    val sharedPrefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
+    val isAttending = sharedPrefs.getBoolean("is_attending", true)
+    val themeColor = if (isAttending) com.rajeducational.erp.theme.AppColors.Student else androidx.compose.ui.graphics.Color.Red
+
     Scaffold(
         bottomBar = {
             NavigationBar(containerColor = Color.White) {
@@ -186,16 +237,22 @@ fun StudentDashboardScreen(navController: NavController) {
                     "Home" to Icons.Default.Home,
                     "Gallery" to Icons.Default.PhotoLibrary,
                     "Profile" to Icons.Default.Person,
-                    "Fees" to Icons.Default.Payment,
+                    "Messages" to Icons.AutoMirrored.Filled.Chat,
                     "More" to Icons.Default.MoreHoriz
                 ).forEachIndexed { index, (label, icon) ->
                     NavigationBarItem(
                         selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        onClick = { 
+                            if (index == 4) {
+                                navController.navigate("student_messages")
+                            } else {
+                                selectedTab = index 
+                            }
+                        },
                         icon = { 
                             Box {
                                 Icon(icon, label)
-                                if (label == "More" && unreadMessagesCount > 0) {
+                                if (label == "Messages" && unreadMessagesCount > 0) {
                                     Box(
                                         modifier = Modifier
                                             .size(8.dp)
@@ -206,7 +263,7 @@ fun StudentDashboardScreen(navController: NavController) {
                             }
                         },
                         label = { Text(label, fontSize = 10.sp) },
-                        colors = NavigationBarItemDefaults.colors(selectedIconColor = AppColors.Student, indicatorColor = AppColors.Student.copy(alpha = 0.1f))
+                        colors = NavigationBarItemDefaults.colors(selectedIconColor = themeColor, indicatorColor = themeColor.copy(alpha = 0.1f))
                     )
                 }
             }
@@ -214,7 +271,7 @@ fun StudentDashboardScreen(navController: NavController) {
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background).verticalScroll(rememberScrollState())) {
             // Top bar
-            Row(modifier = Modifier.fillMaxWidth().background(AppColors.Student).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier.fillMaxWidth().background(themeColor).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(if (selectedTab == 0) "Announcements" else "Student Dashboard", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 IconButton(onClick = { 
                     val sharedPrefs = context.getSharedPreferences("StudentPrefs", android.content.Context.MODE_PRIVATE)
@@ -287,7 +344,7 @@ fun StudentDashboardScreen(navController: NavController) {
                             msg["docId"]?.toString()?.let { addDismissedId(it) }
                         },
                         color = Color(0xFFE3F2FD),
-                        iconTint = AppColors.Student
+                        iconTint = themeColor
                     )
                 }
 
@@ -318,7 +375,7 @@ fun StudentDashboardScreen(navController: NavController) {
                                 val formatter = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault())
                                 val dateString = formatter.format(java.util.Date(announcement.timestamp))
                                 val sender = if (announcement.senderName.isNotEmpty()) announcement.senderName else "Admin"
-                                Text("By $sender | $dateString", fontSize = 12.sp, color = AppColors.Student)
+                                Text("By $sender | $dateString", fontSize = 12.sp, color = themeColor)
                                 Spacer(modifier = Modifier.height(8.dp))
                                 
                                 androidx.compose.ui.viewinterop.AndroidView(
@@ -384,13 +441,25 @@ fun StudentDashboardScreen(navController: NavController) {
             } else if (selectedTab == 1) {
                 // Home
                 // Fee Reminder Banner
-                Card(modifier = Modifier.fillMaxWidth().padding(16.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFFCE4EC)), shape = RoundedCornerShape(12.dp)) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Warning, "Warning", tint = AppColors.Error, modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("Fees Pending", fontWeight = FontWeight.Bold, color = AppColors.Error)
-                            Text("Your fees payment is pending", fontSize = 12.sp, color = AppColors.TextSecondary)
+                if (isFeeReminderActive) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .clickable { navController.navigate("student_fees") },
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFCE4EC)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Warning, "Warning", tint = AppColors.Error, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("Fees Pending", fontWeight = FontWeight.Bold, color = AppColors.Error)
+                                Text(feeReminderText.ifBlank { "Your fees payment is pending" }, fontSize = 12.sp, color = AppColors.TextSecondary)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                val dateFormat = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault())
+                                Text("Due Date: ${dateFormat.format(java.util.Date(feeReminderExpiry))}", fontSize = 11.sp, color = AppColors.Error, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -398,7 +467,7 @@ fun StudentDashboardScreen(navController: NavController) {
                 // Welcome Card
                 Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(16.dp)) {
                     Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(50.dp).clip(CircleShape).background(AppColors.Student), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.size(50.dp).clip(CircleShape).background(themeColor), contentAlignment = Alignment.Center) {
                             val initial = studentProfile?.get("fullName")?.toString()?.firstOrNull()?.toString() ?: "S"
                             Text(initial.uppercase(), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                         }
@@ -412,15 +481,155 @@ fun StudentDashboardScreen(navController: NavController) {
                         }
                     }
                 }
+
+                if (holidayState?.isHoliday == true) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    val isSunday = holidayState?.holidayName?.equals("Sunday", ignoreCase = true) == true
+                    val messageTitle = if (isSunday) "Sunday" else "Holiday Today"
+                    val messageBody = if (isSunday) {
+                        "Today is Sunday, the college will be off, and your attendance won't be affected."
+                    } else {
+                        "Today is a holiday (${holidayState?.holidayName}), the college will be off, and your attendance won't be affected."
+                    }
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        colors = CardDefaults.cardColors(containerColor = if (isSunday) Color(0xFFE8F5E9) else Color(0xFFFFF9C4)),
+                        shape = RoundedCornerShape(16.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSunday) Color(0xFF81C784) else Color(0xFFFBC02D))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isSunday) Icons.Default.CalendarMonth else Icons.Default.Celebration,
+                                contentDescription = "Holiday",
+                                tint = if (isSunday) Color(0xFF2E7D32) else Color(0xFFF57F17),
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column {
+                                Text(
+                                    text = messageTitle,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSunday) Color(0xFF1B5E20) else Color(0xFF5D4037),
+                                    fontSize = 16.sp
+                                )
+                                Text(
+                                    text = messageBody,
+                                    color = if (isSunday) Color(0xFF2E7D32) else Color(0xFF795548),
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                AttendanceStatsCard(
+                    studentId = studentId ?: "",
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    cardColor = Color.White
+                )
     
-                // App ID Card
-                Card(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(12.dp)) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Badge, "ID", tint = AppColors.Student, modifier = Modifier.size(24.dp))
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("App ID", fontSize = 13.sp, color = AppColors.TextSecondary)
-                            Text(studentId ?: "Unknown", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
+                var timeInStr by remember { mutableStateOf<String?>(null) }
+                var timeOutStr by remember { mutableStateOf<String?>(null) }
+                var isLate by remember { mutableStateOf(false) }
+                
+                LaunchedEffect(studentId) {
+                    if (studentId != null) {
+                        com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("attendance")
+                            .whereEqualTo("studentId", studentId)
+                            .addSnapshotListener { snapshot, _ ->
+                                if (snapshot != null && !snapshot.isEmpty) {
+                                    val calendar = java.util.Calendar.getInstance()
+                                    calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+                                    calendar.set(java.util.Calendar.MINUTE, 0)
+                                    calendar.set(java.util.Calendar.SECOND, 0)
+                                    val startOfDay = calendar.timeInMillis
+                                    
+                                    val todayDocs = snapshot.documents.filter { (it.getLong("timestamp") ?: 0L) >= startOfDay }
+                                    
+                                    val inDoc = todayDocs.filter { it.getString("type") == "IN" }.maxByOrNull { it.getLong("timestamp") ?: 0L }
+                                    val outDoc = todayDocs.filter { it.getString("type") == "OUT" }.maxByOrNull { it.getLong("timestamp") ?: 0L }
+                                    
+                                    val format = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault())
+                                    if (inDoc != null) {
+                                        val ts = inDoc.getLong("timestamp") ?: 0L
+                                        val status = inDoc.getString("status") ?: ""
+                                        timeInStr = format.format(java.util.Date(ts))
+                                        isLate = status.contains("Late", ignoreCase = true)
+                                    } else {
+                                        timeInStr = null
+                                        isLate = false
+                                    }
+                                    
+                                    if (outDoc != null) {
+                                        val ts = outDoc.getLong("timestamp") ?: 0L
+                                        timeOutStr = format.format(java.util.Date(ts))
+                                    } else {
+                                        timeOutStr = null
+                                    }
+                                }
+                            }
+                    }
+                }
+
+                // Today's Attendance Card - Always Visible
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Attendance",
+                                tint = if (timeInStr != null || timeOutStr != null) Color(0xFF2E7D32) else AppColors.TextSecondary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text("Today's Attendance", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
+                        }
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        if (timeInStr == null && timeOutStr == null) {
+                            Text("You haven't marked attendance for today yet.", fontSize = 14.sp, color = AppColors.TextSecondary)
+                        } else {
+                            if (timeInStr != null) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Marked Present (Time In):", color = AppColors.TextSecondary)
+                                    Text(timeInStr ?: "", fontWeight = FontWeight.Medium)
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+                            if (timeOutStr != null) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Marked Present (Time Out):", color = AppColors.TextSecondary)
+                                    Text(timeOutStr ?: "", fontWeight = FontWeight.Medium)
+                                }
+                            }
+                            if (isLate) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("You were marked late today.", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        HorizontalDivider(color = Color.LightGray.copy(alpha = 0.5f))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        Button(
+                            onClick = { showQrDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.QrCode, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Give Attendance by QR Code", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -451,7 +660,7 @@ fun StudentDashboardScreen(navController: NavController) {
                     
                     if (isGalleryLoading) {
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { 
-                            CircularProgressIndicator(color = AppColors.Student) 
+                            CircularProgressIndicator(color = themeColor) 
                         }
                     } else if (photos.isEmpty()) {
                         Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { 
@@ -559,7 +768,7 @@ fun StudentDashboardScreen(navController: NavController) {
                                     downloadManager.enqueue(request)
                                     android.widget.Toast.makeText(context, "Download started...", android.widget.Toast.LENGTH_SHORT).show()
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Student),
+                                colors = ButtonDefaults.buttonColors(containerColor = themeColor),
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
                                     .padding(bottom = 32.dp)
@@ -609,129 +818,81 @@ fun StudentDashboardScreen(navController: NavController) {
                                 }
                                 isEditingProfile = !isEditingProfile 
                             }) {
-                                Icon(if (isEditingProfile) Icons.Default.Check else Icons.Default.Edit, contentDescription = if (isEditingProfile) "Save" else "Edit", tint = AppColors.Student)
+                                Icon(if (isEditingProfile) Icons.Default.Check else Icons.Default.Edit, contentDescription = if (isEditingProfile) "Save" else "Edit", tint = themeColor)
                             }
                         }
                         
                         Spacer(modifier = Modifier.height(16.dp))
                         
+                        val profileUrl = studentProfile?.get("profileUrl") as? String
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            if (!profileUrl.isNullOrEmpty()) {
+                                com.rajeducational.erp.ui.components.ProfileImage(
+                                    urlOrBase64 = profileUrl,
+                                    modifier = Modifier.size(100.dp).clip(androidx.compose.foundation.shape.CircleShape),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier.size(100.dp).clip(androidx.compose.foundation.shape.CircleShape).background(themeColor),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(50.dp))
+                                }
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Badge
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Surface(
+                                color = themeColor.copy(alpha = 0.15f),
+                                contentColor = themeColor,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = if (isAttending) "Attending" else "Non-attending",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Button(
+                            onClick = {
+                                if (studentId != null) {
+                                    navController.navigate("face_registration/student/${studentId}")
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = themeColor)
+                        ) {
+                            Icon(Icons.Default.CameraAlt, contentDescription = "Rescan", tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Rescan your profile picture", color = Color.White, fontSize = 16.sp)
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
                         if (isEditingProfile) {
-                            OutlinedTextField(value = editFullName, onValueChange = { editFullName = it }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp))
+                            OutlinedTextField(value = editFullName, onValueChange = {}, label = { Text("Full Name (Fixed)") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), readOnly = true)
                             Spacer(modifier = Modifier.height(8.dp))
-                            OutlinedTextField(value = editPhone, onValueChange = { editPhone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), readOnly = true)
+                            OutlinedTextField(value = editPhone, onValueChange = { editPhone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp))
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedTextField(value = editEmail, onValueChange = { editEmail = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp))
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedTextField(value = editAddress, onValueChange = { editAddress = it }, label = { Text("Address") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp))
                             Spacer(modifier = Modifier.height(8.dp))
-                            
-                            @OptIn(ExperimentalMaterial3Api::class)
-                            ExposedDropdownMenuBox(
-                                expanded = expandedCollege,
-                                onExpandedChange = { expandedCollege = !expandedCollege },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                OutlinedTextField(
-                                    value = editCollege,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Select College *") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedCollege) },
-                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                                    modifier = Modifier.menuAnchor().fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = expandedCollege,
-                                    onDismissRequest = { expandedCollege = false }
-                                ) {
-                                    colleges.forEach { college ->
-                                        DropdownMenuItem(
-                                            text = { Text(college.name) },
-                                            onClick = {
-                                                editCollege = college.name
-                                                selectedCollegeObj = college
-                                                editCourse = ""
-                                                selectedCourseObj = null
-                                                editSession = ""
-                                                expandedCollege = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                            
+                            OutlinedTextField(value = editCollege, onValueChange = {}, label = { Text("College (Fixed)") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), readOnly = true)
                             Spacer(modifier = Modifier.height(8.dp))
-                            
-                            @OptIn(ExperimentalMaterial3Api::class)
-                            ExposedDropdownMenuBox(
-                                expanded = expandedCourse,
-                                onExpandedChange = { expandedCourse = !expandedCourse },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                OutlinedTextField(
-                                    value = editCourse,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Select Course *") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedCourse) },
-                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                                    modifier = Modifier.menuAnchor().fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = expandedCourse,
-                                    onDismissRequest = { expandedCourse = false }
-                                ) {
-                                    val courses = selectedCollegeObj?.courses ?: emptyList()
-                                    courses.forEach { course ->
-                                        DropdownMenuItem(
-                                            text = { Text(course.name) },
-                                            onClick = {
-                                                editCourse = course.name
-                                                selectedCourseObj = course
-                                                editSession = ""
-                                                expandedCourse = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                            
+                            OutlinedTextField(value = editCourse, onValueChange = {}, label = { Text("Course (Fixed)") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), readOnly = true)
                             Spacer(modifier = Modifier.height(8.dp))
-                            
-                            @OptIn(ExperimentalMaterial3Api::class)
-                            ExposedDropdownMenuBox(
-                                expanded = expandedSession,
-                                onExpandedChange = { expandedSession = !expandedSession },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                OutlinedTextField(
-                                    value = editSession,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Select Course Year (Session) *") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedSession) },
-                                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
-                                    modifier = Modifier.menuAnchor().fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = expandedSession,
-                                    onDismissRequest = { expandedSession = false }
-                                ) {
-                                    val sessions = selectedCourseObj?.yearBatches ?: emptyList()
-                                    sessions.forEach { yearBatch ->
-                                        DropdownMenuItem(
-                                            text = { Text(yearBatch) },
-                                            onClick = {
-                                                editSession = yearBatch
-                                                expandedSession = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
+                            OutlinedTextField(value = editSession, onValueChange = {}, label = { Text("Course Year/Session (Fixed)") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), readOnly = true)
                         } else {
                             ProfileDetailRow("App ID", studentId ?: "N/A")
                             ProfileDetailRow("Full Name", studentProfile?.get("fullName")?.toString() ?: "N/A")
@@ -749,7 +910,38 @@ fun StudentDashboardScreen(navController: NavController) {
                 // More Options
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     Text("More Options", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = AppColors.Navy)
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val hasFeeReminder = studentProfile?.get("hasFeeReminder") as? Boolean ?: false
+                    val feeReminderExpiry = studentProfile?.get("feeReminderExpiry") as? Long ?: 0L
+                    val feeReminderText = studentProfile?.get("feeReminderText") as? String ?: ""
+                    val isFeeReminderActive = hasFeeReminder && System.currentTimeMillis() < feeReminderExpiry
+
+                    if (isFeeReminderActive) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp)
+                                .clickable { navController.navigate("student_fees") },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFCE4EC)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Warning, "Warning", tint = AppColors.Error, modifier = Modifier.size(24.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("Fees Pending", fontWeight = FontWeight.Bold, color = AppColors.Error)
+                                    Text(feeReminderText.ifBlank { "Your fees payment is pending" }, fontSize = 12.sp, color = AppColors.TextSecondary)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    val dateFormat = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault())
+                                    Text("Due Date: ${dateFormat.format(java.util.Date(feeReminderExpiry))}", fontSize = 11.sp, color = AppColors.Error, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    } else {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                     
                     // Events
                     Card(
@@ -785,18 +977,21 @@ fun StudentDashboardScreen(navController: NavController) {
                     
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    // Messages
+                    // Fees
                     Card(
-                        modifier = Modifier.fillMaxWidth().clickable { navController.navigate("student_messages") },
+                        modifier = Modifier.fillMaxWidth().clickable { navController.navigate("student_fees") },
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = Color.White)
                     ) {
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Chat, "Messages", tint = AppColors.Guest)
+                            Icon(Icons.Default.Payment, "Fees", tint = AppColors.Guest)
                             Spacer(modifier = Modifier.width(16.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Messages", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                                if (unreadMessagesCount > 0) {
+                                Text("Fees", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                val hasFeeReminder = studentProfile?.get("hasFeeReminder") as? Boolean ?: false
+                                val feeReminderExpiry = studentProfile?.get("feeReminderExpiry") as? Long ?: 0L
+                                val isFeeReminderActive = hasFeeReminder && System.currentTimeMillis() < feeReminderExpiry
+                                if (isFeeReminderActive) {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Box(
                                         modifier = Modifier
@@ -819,13 +1014,15 @@ fun StudentDashboardScreen(navController: NavController) {
                         colors = CardDefaults.cardColors(containerColor = Color.White)
                     ) {
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Star, "Review", tint = AppColors.Student)
+                            Icon(Icons.Default.Star, "Review", tint = themeColor)
                             Spacer(modifier = Modifier.width(16.dp))
                             Text("Give reviews to teachers", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                             Spacer(modifier = Modifier.weight(1f))
                             Icon(Icons.Default.ChevronRight, "Go", tint = AppColors.TextSecondary)
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             } else {
                 Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -833,6 +1030,117 @@ fun StudentDashboardScreen(navController: NavController) {
                 }
             }
         }
+    }
+
+    if (showQrDialog) {
+        val activity = context as? android.app.Activity
+        DisposableEffect(Unit) {
+            activity?.window?.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+            onDispose {
+                activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { showQrDialog = false },
+            title = {
+                Text(
+                    text = "Give Attendance by QR Code",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.Navy
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Show this QR code to the teacher's scanner.",
+                        fontSize = 14.sp,
+                        color = AppColors.TextSecondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
+                    if (qrBitmap != null) {
+                        Image(
+                            bitmap = qrBitmap!!.asImageBitmap(),
+                            contentDescription = "Attendance QR Code",
+                            modifier = Modifier
+                                .size(240.dp)
+                                .background(Color.White)
+                                .padding(8.dp)
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(240.dp)
+                                .background(Color.LightGray.copy(alpha = 0.3f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = themeColor)
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text(
+                        text = "Screenshots are disabled. You cannot do a screenshot of the QR code. This is illegal.",
+                        fontSize = 12.sp,
+                        color = Color.Red,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    // Countdown text with progress bar
+                    Text(
+                        text = "Refreshing in $secondsRemaining seconds...",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = themeColor
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    LinearProgressIndicator(
+                        progress = { secondsRemaining / 15f },
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                        color = themeColor,
+                        trackColor = Color.LightGray.copy(alpha = 0.3f)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showQrDialog = false }
+                ) {
+                    Text("Close", color = themeColor)
+                }
+            }
+        )
+    }
+
+    if (isProfileDeleted) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Profile Deleted") },
+            text = { Text("You were logged out. Your profile was deleted by the teacher.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    navController.navigate("student_auth") {
+                        popUpTo("landing")
+                    }
+                }) {
+                    Text("Log in again or Scan again")
+                }
+            }
+        )
     }
 }
 
